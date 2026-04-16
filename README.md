@@ -1,6 +1,31 @@
-# skerry
+# Skerry: Super Kool ERRors Yoh
 
-## Skerry: Super Kool ERRors Yoh
+Example:
+```rust
+use skerry::*;
+
+// 1. Define your error boundary
+#[error_module]
+pub mod errors {
+    pub struct DatabaseErr;
+    pub struct AuthErr;
+    pub struct ValidationErr;
+}
+
+// 2. Generate a 'low_level' error enum automatically
+#[fn_error]
+fn check_auth() -> Result<(), AuthErr> {
+    Err(CheckAuthError::AuthErr(AuthErr))
+}
+
+// 3. Use '&' to expand and bubble up sub-errors seamlessly
+#[fn_error]
+pub fn Controller() -> Result<(), (ValidationErr, &CheckAuthError)> {
+    // ValidationErr is local, AuthErr is pulled in from check_auth via '&'
+    check_auth()?;
+    Ok(())
+}
+```
 
 Known Issues:
 - There's no macro for handling `impl` blocks
