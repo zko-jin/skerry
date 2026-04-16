@@ -5,7 +5,7 @@
 //! use skerry::*;
 //!
 //! // 1. Define your error boundary
-//! #[error_module]
+//! #[skerry_mod]
 //! pub mod errors {
 //!     pub struct DatabaseErr;
 //!     pub struct AuthErr;
@@ -13,13 +13,13 @@
 //! }
 //!
 //! // 2. Generate a 'low_level' error enum automatically
-//! #[fn_error]
+//! #[skerry_fn]
 //! fn check_auth() -> Result<(), AuthErr> {
 //!     Err(CheckAuthError::AuthErr(AuthErr))
 //! }
 //!
 //! // 3. Use '&' to expand and bubble up sub-errors seamlessly
-//! #[fn_error]
+//! #[skerry_fn]
 //! pub fn Controller() -> Result<(), (ValidationErr, &CheckAuthError)> {
 //!     // ValidationErr is local, AuthErr is pulled in from check_auth via '&'
 //!     check_auth()?;
@@ -37,9 +37,9 @@
 //!
 //! ## Core Workflow
 //!
-//! 1. **Centralize**: Define all possible error structs in a `#[error_module]`.
-//! 2. **Annotate**: Mark functions with `#[fn_error]`.
-//! 3. **Compose**: Use the `&` operator to bubble up errors from sub-functions without manually mapping variants.
+//! 1. Define all possible error structs in a `#[skerry_mod]`.
+//! 2. Mark functions with `#[skerry_fn]`.
+//! 3. Use the `&` operator to bubble up errors from sub-functions without manually mapping variants.
 //!
 //! ---
 //!
@@ -47,9 +47,9 @@
 //! Every project needs one module (usually `errors.rs`) that acts as the source of truth.
 //!
 //! ```rust,ignore
-//! pub use skerry::*; // Required to be pub for macro expansion
+//! pub use skerry::*; // Required to be pub for easier macro expansions
 //!
-//! #[error_module]
+//! #[skerry_mod]
 //! mod errors {
 //!     pub struct ErrA;
 //!     pub struct ErrB;
@@ -64,11 +64,11 @@
 //!
 //! ## Function-Specific Enums
 //!
-//! By using `#[fn_error]`, you define a return type using a tuple of error structs.
+//! By using `#[skerry_fn]`, you define a return type using a tuple of error structs.
 //! Skerry transforms this into a unique enum named `{FunctionName}Error`.
 //!
 //! ```rust
-//! #[fn_error]
+//! #[skerry_fn]
 //! pub fn low_level() -> Result<(), (ErrA, ErrB)> {
 //!     // Generates LowLevelError { ErrA(ErrA), ErrB(ErrB) }
 //!     Err(LowLevelError::ErrA(ErrA)) // You can also type Err(ErrA.into())
@@ -87,7 +87,7 @@
 //!   and also exists inside a `&` expansion, only one variant is generated.
 //!
 //! ```rust,ignore
-//! #[fn_error]
+//! #[skerry_fn]
 //! pub fn high_level() -> Result<(), (ErrC, &LowLevelError)> {
 //!     // 1. Sees ErrC -> Adds variant
 //!     // 2. Sees &LowLevelError -> Inspects LowLevelError, finds (ErrA, ErrB)
@@ -101,7 +101,7 @@
 //! The syntax below has the exact same effects, `&LowLevelError` is nothing more than syntatic sugar
 //!
 //! ```rust,ignore
-//! #[fn_error]
+//! #[skerry_fn]
 //! pub fn high_level() -> Result<(), (ErrA, ErrB, ErrC)> {
 //!     // ...
 //! }
@@ -173,6 +173,6 @@ mod test {
 
     #[test]
     pub fn test() {
-        my_fn3();
+        let _ = my_fn3();
     }
 }
