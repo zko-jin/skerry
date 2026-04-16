@@ -46,7 +46,7 @@
 //! ## The Error Module
 //! Every project needs one module (usually `errors.rs`) that acts as the source of truth.
 //!
-//! ```rust,ignore
+//! ```rust
 //! pub use skerry::*; // Required to be pub for easier macro expansions
 //!
 //! #[skerry_mod]
@@ -68,6 +68,14 @@
 //! Skerry transforms this into a unique enum named `{FunctionName}Error`.
 //!
 //! ```rust
+//! # pub use skerry::*;
+//! # #[skerry_mod]
+//! # mod errors {
+//! #     pub struct ErrA;
+//! #     pub struct ErrB;
+//! #     pub struct ErrC;
+//! #     pub struct DatabaseErr;
+//! # }
 //! #[skerry_fn]
 //! pub fn low_level() -> Result<(), (ErrA, ErrB)> {
 //!     // Generates LowLevelError { ErrA(ErrA), ErrB(ErrB) }
@@ -86,7 +94,20 @@
 //! * **Deduplication**: Variants are deduplicated automatically. If `ErrA` is added manually
 //!   and also exists inside a `&` expansion, only one variant is generated.
 //!
-//! ```rust,ignore
+//! ```rust
+//! # pub use skerry::*;
+//! # #[skerry_mod]
+//! # mod errors {
+//! #     pub struct ErrA;
+//! #     pub struct ErrB;
+//! #     pub struct ErrC;
+//! #     pub struct DatabaseErr;
+//! # }
+//! # #[skerry_fn]
+//! # pub fn low_level() -> Result<(), (ErrA, ErrB)> {
+//! #     // Generates LowLevelError { ErrA(ErrA), ErrB(ErrB) }
+//! #     Err(LowLevelError::ErrA(ErrA)) // You can also type Err(ErrA.into())
+//! # }
 //! #[skerry_fn]
 //! pub fn high_level() -> Result<(), (ErrC, &LowLevelError)> {
 //!     // 1. Sees ErrC -> Adds variant
@@ -100,15 +121,32 @@
 //!
 //! The syntax below has the exact same effects, `&LowLevelError` is nothing more than syntatic sugar
 //!
-//! ```rust,ignore
+//! ```rust
+//! # pub use skerry::*;
+//! # #[skerry_mod]
+//! # mod errors {
+//! #     pub struct ErrA;
+//! #     pub struct ErrB;
+//! #     pub struct ErrC;
+//! #     pub struct DatabaseErr;
+//! # }
+//! # #[skerry_fn]
+//! # pub fn low_level() -> Result<(), (ErrA, ErrB)> {
+//! #     // Generates LowLevelError { ErrA(ErrA), ErrB(ErrB) }
+//! #     Err(LowLevelError::ErrA(ErrA)) // You can also type Err(ErrA.into())
+//! # }
 //! #[skerry_fn]
 //! pub fn high_level() -> Result<(), (ErrA, ErrB, ErrC)> {
 //!     // ...
+//!     # Ok(())
 //! }
 //! ```
 //!
 //! In the cases above the generated enum looks like this
-//! ```rust,ignore
+//! ```rust
+//! # struct ErrA;
+//! # struct ErrB;
+//! # struct ErrC;
 //! pub enum HighLevelError {
 //!     ErrA(ErrA),
 //!     ErrB(ErrB),
@@ -129,7 +167,6 @@
 mod helpers;
 mod macros;
 mod traits;
-
 pub use skerry_macros::{skerry_fn, skerry_mod};
 
 pub mod skerry_internals {
