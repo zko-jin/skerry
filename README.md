@@ -10,6 +10,13 @@ pub mod errors {
     pub struct DatabaseErr;
     pub struct AuthErr;
     pub struct ValidationErr;
+
+    pub struct LibErr(ErrorFromLib);
+    impl From<ErrorFromLib> for LibErr {
+        fn from(val: ErrorFromLib) -> Self {
+            Self(val)
+        }
+    }
 }
 
 // 2. Generate a 'low_level' error enum automatically
@@ -18,18 +25,20 @@ fn check_auth() -> Result<(), AuthErr> {
     Err(CheckAuthError::AuthErr(AuthErr))
 }
 
+
 // 3. Use '&' to expand and bubble up sub-errors seamlessly
 #[skerry_fn]
-pub fn Controller() -> Result<(), (ValidationErr, &CheckAuthError)> {
+pub fn Controller() -> Result<(), (ValidationErr, LibErr, &CheckAuthError)> {
     // ValidationErr is local, AuthErr is pulled in from check_auth via '&'
     check_auth()?;
+
+    // You can also automatically bubble up library errors as long as an error from
+    // `#[skerry_mod]` implements `From` for it
+    lib_fn_that_returns_error()?;
+
     Ok(())
 }
 ```
-
-Known Issues:
-- There's no macro for handling `impl` blocks
-- Same for `trait` blocks
 
 Skerry is a type-safe error management framework designed to kill boilerplate.
 It allows you to define a global error set while returning granular, function-specific
@@ -47,7 +56,7 @@ enums that are automatically generated at compile-time.
 Every project needs one module (usually `errors.rs`) that acts as the source of truth.
 
 ```rust
-pub use skerry::*; // Required to be pub for easier macro expansions
+pub use skerry::*; // Recommended to be pub for easier macro expansions
 
 #[skerry_mod]
 mod errors {
@@ -114,6 +123,38 @@ pub enum HighLevelError {
     ErrA(ErrA),
     ErrB(ErrB),
     ErrC(ErrC),
+}
+```
+### Using Skerry inside Impl Blocks
+
+Skerry provides the `#[skerry_impl]` attribute to handle methods within `impl` blocks.
+This attribute coordinates with `#[skerry_fn]` to split the generated code:
+
+1.  **Top-Level**: The error enums are generated outside the `impl` block.
+2.  **Method-Level**: The method signature is updated, and all `?` operators are
+    automatically transformed to wrap errors into `GlobalErrors`.
+
+#### Example
+
+```rust
+use skerry::*;
+
+#
+pub struct Database;
+
+#[skerry_impl(prefix(Database))] // Optional prefix for functions inside impl block
+impl Database {
+    #[skerry_fn]
+    pub fn connect(&self) -> Result<(), (&RemoteCallError)> {
+        remote_call()?;
+        Ok(())
+    }
+}
+
+fn main() {
+    let db = Database;
+    let result: Result<(), DatabaseConnectError> = db.connect();
+    assert!(result.is_ok());
 }
 ```
 
