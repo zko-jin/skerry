@@ -31,6 +31,14 @@ pub fn skerry_mod(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         #[macro_export]
         macro_rules! skerry_impl_missing_errors {
+            ($ty:ty, [$($v:ident),*], no_expand) => {
+                skerry::skerry_internals::impl_missing_converts!(
+                    $ty,
+                    [#(#struct_names),*],
+                    [$($v),*],
+                    no_expand
+                );
+            };
             ($ty:ty, [$($v:ident),*]) => {
                 skerry::skerry_internals::impl_missing_converts!(
                     $ty,
@@ -43,7 +51,7 @@ pub fn skerry_mod(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #(
             impl skerry::skerry_internals::SkerryError for #struct_names {}
 
-            // skerry_impl_missing_errors!(#struct_names, [#struct_names], no_expand);
+            skerry_impl_missing_errors!(#struct_names, [#struct_names], no_expand);
 
             impl<I: Into<#struct_names>> From<I> for GlobalErrors<#struct_names> {
                 fn from(val: I) -> Self {

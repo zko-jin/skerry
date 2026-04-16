@@ -100,21 +100,29 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
         }
     };
 
+    let from_impl = if expand {
+        quote! {
+            impl<E: skerry::skerry_internals::SkerryError #( + skerry::skerry_internals::MissingConvert<#filtered>)*>
+                From<GlobalErrors<E>> for #ty
+            {
+                fn from(val: GlobalErrors<E>) -> #ty {
+                    match val {
+                        #match_from
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     let expanded = quote! {
         #(
             impl skerry::skerry_internals::MissingConvert<#filtered> for #ty {}
         )*
 
-        impl<E: skerry::skerry_internals::SkerryError #( + skerry::skerry_internals::MissingConvert<#filtered>)*>
-            From<GlobalErrors<E>> for #ty
-        {
-            fn from(val: GlobalErrors<E>) -> #ty {
-                match val {
-                    #match_from
-                    _ => unreachable!(),
-                }
-            }
-        }
+        #from_impl
     };
 
     TokenStream::from(expanded)
