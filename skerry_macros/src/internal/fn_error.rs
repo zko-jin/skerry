@@ -1,12 +1,33 @@
 use proc_macro::TokenStream;
 use proc_macro2::{TokenStream as TokenStream2, TokenTree};
-use quote::{format_ident, quote, ToTokens};
+use quote::{ToTokens, format_ident, quote};
+use syn::visit_mut::{self, VisitMut};
+use syn::{Expr, ExprTry};
 use syn::{
-    parse_macro_input, parse_quote, GenericArgument, ItemFn, PathArguments, ReturnType, Type,
+    GenericArgument, ItemFn, PathArguments, ReturnType, Type, parse_macro_input, parse_quote,
 };
+
+struct QuestionMarkTransformer;
+
+impl VisitMut for QuestionMarkTransformer {
+    fn visit_expr_mut(&mut self, node: &mut Expr) {
+        visit_mut::visit_expr_mut(self, node);
+
+        if let Expr::Try(ExprTry { expr, .. }) = node {
+            let inner = expr.as_ref();
+            *node = parse_quote! {
+                #inner.map_err(|e| Into::<GlobalErrors<_>>::into(e))?
+            };
+        }
+    }
+}
 
 pub fn fn_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input_fn = parse_macro_input!(item as ItemFn);
+
+    let mut transformer = QuestionMarkTransformer;
+    transformer.visit_item_fn_mut(&mut input_fn);
+
     let fn_name = &input_fn.sig.ident;
 
     // 2. Derive Names

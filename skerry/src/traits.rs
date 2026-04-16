@@ -1,10 +1,4 @@
-pub trait ComparableError {
-    const NAME: &'static str;
-    const CODES: &'static [&'static str];
-}
-pub trait ErrCode {
-    const CODE: &'static str;
-}
+pub trait SkerryError {}
 
 // #[diagnostic::(
 //     message = "The error '{E}' is not handled by the function return type

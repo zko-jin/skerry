@@ -182,9 +182,9 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
 
         skerry_impl_missing_errors!(#ty, [#(#variants),*]);
 
-        impl Into<GlobalErrors<#ty>> for #ty {
-            fn into(self) -> GlobalErrors<#ty> {
-                match self {
+        impl From<#ty> for GlobalErrors<#ty> {
+            fn from(val: #ty) -> GlobalErrors<#ty> {
+                match val {
                     #(
                         #ty::#variants(v) => GlobalErrors::#variants(v),
                     )*
@@ -192,97 +192,7 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
             }
         }
 
-        #(
-            impl From<#deduped> for #ty {
-                fn from(value: #deduped) -> Self {
-                    Self::#variants(value)
-                }
-            }
-
-            // impl<T> From<Result<T, #deduped>> for Result<T, #ty> {
-            //     fn from(value: Result<T, #deduped>) -> Self {
-            //         match value {
-            //             Ok(t) => Ok(t),
-            //             Err(e) => Err(e.into()),
-            //         }
-            //     }
-            // }
-
-            // TODO Recheck this later
-            // impl<T, I: Into<#variants>> std::ops::FromResidual<I> for #base_path::Result<T, #ty>
-            // {
-            //     fn from_residual(residual: I) -> #base_path::Result<T, #ty> {
-            //         Result::Err(#ty::#variants(residual.into()))
-            //     }
-            // }
-        )*
-
-        impl skerry::skerry_internals::ComparableError for #ty {
-            const NAME: &'static str = stringify!(#ty);
-
-            const CODES: &'static [&'static str] = &[
-                #(
-                    <#deduped as skerry::skerry_internals::ErrCode>::CODE,
-                )*
-            ];
-        }
-
-        // impl #ty {
-        //     #[track_caller]
-        //     const fn check<E: skerry::skerry_internals::ComparableError>() {
-        //         use skerry::skerry_internals::ComparableError;
-        //         let mut not_found_types = skerry::skerry_internals::ConstantStrVec::new();
-
-        //         let mut index = 0;
-        //         let len = #ty::CODES.len();
-        //         let mut current_needle = 0;
-        //         let needle_len = E::CODES.len();
-
-        //         while current_needle < needle_len {
-        //             if E::CODES[current_needle].compare(#ty::CODES[index]) {
-        //                 current_needle += 1;
-        //                 index = 0;
-        //                 continue;
-        //             }
-
-        //             index += 1;
-        //             if index == len {
-        //                 let error_type: &'static str = E::CODES[current_needle];
-        //                 not_found_types.push(error_type);
-        //                 current_needle += 1;
-        //                 index = 0;
-        //             }
-        //         }
-
-        //         if !not_found_types.is_empty() {
-        //             const_panic::concat_panic! {
-        //                 "Cannot convert `",
-        //                 display: stringify!(#ty),
-        //                 "` from `",
-        //                 display: E::NAME,
-        //                 "`, missing ",
-        //                 not_found_types.get_slice(),
-        //             };
-        //         }
-        //     }
-        // }
-
-        impl<T> std::ops::Try for Result<T, #ty> {
-            type Output = T;
-            type Residual = GlobalErrors<#ty>;
-
-            fn from_output(output: Self::Output) -> Self {
-                Result::Ok(output)
-            }
-
-            fn branch(self) -> std::ops::ControlFlow<Self::Residual, Self::Output> {
-                match self {
-                    Result::Ok(t) => std::ops::ControlFlow::Continue(t),
-                    Result::Err(e) => std::ops::ControlFlow::Break(e.into()),
-                }
-            }
-        }
-
+        impl skerry::skerry_internals::SkerryError for #ty {}
     };
 
     TokenStream::from(expanded)

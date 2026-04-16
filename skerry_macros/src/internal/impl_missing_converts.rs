@@ -12,12 +12,12 @@ struct MacroInput {
     pub ty: Ident,
     pub source: Vec<Path>,
     pub to_remove: Vec<Path>,
+    pub expand: bool,
 }
 
 impl Parse for MacroInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let ty: Ident;
-        ty = input.parse()?;
+        let ty: Ident = input.parse()?;
         input.parse::<Token![,]>()?;
 
         let content;
@@ -27,7 +27,7 @@ impl Parse for MacroInput {
             .into_iter()
             .collect();
 
-        let _ = input.parse::<Token![,]>();
+        input.parse::<Token![,]>()?;
 
         let content2;
         bracketed!(content2 in input);
@@ -36,10 +36,27 @@ impl Parse for MacroInput {
             .into_iter()
             .collect();
 
+        let mut expand = true;
+
+        if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+
+            if input.peek(Ident) {
+                let lookahead = input.lookahead1();
+                let ident: Ident = input.parse()?;
+                if ident == "no_expand" {
+                    expand = false;
+                } else {
+                    return Err(lookahead.error());
+                }
+            }
+        }
+
         Ok(MacroInput {
             ty,
             source,
             to_remove,
+            expand,
         })
     }
 }
@@ -49,6 +66,7 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
         ty,
         source,
         to_remove,
+        expand,
     } = parse_macro_input!(input as MacroInput);
 
     let blacklist: HashSet<String> = to_remove
@@ -64,21 +82,35 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
         })
         .collect();
 
+    let match_from = if expand {
+        quote! {
+            #(
+                GlobalErrors::#to_remove(v) => {
+                    #ty::#to_remove(v)
+                }
+            )*
+        }
+    } else {
+        quote! {
+            #(
+                GlobalErrors::#to_remove(v) => {
+                    v
+                }
+            )*
+        }
+    };
+
     let expanded = quote! {
         #(
             impl skerry::skerry_internals::MissingConvert<#filtered> for #ty {}
         )*
 
-        impl<T, E: skerry::skerry_internals::ComparableError #( + skerry::skerry_internals::MissingConvert<#filtered>)*>
-            std::ops::FromResidual<GlobalErrors<E>> for Result<T, #ty>
+        impl<E: skerry::skerry_internals::SkerryError #( + skerry::skerry_internals::MissingConvert<#filtered>)*>
+            From<GlobalErrors<E>> for #ty
         {
-            fn from_residual(residual: GlobalErrors<E>) -> Result<T, #ty> {
-                match residual {
-                    #(
-                        GlobalErrors::#to_remove(v) => {
-                            Result::Err(#ty::#to_remove(v))
-                        }
-                    )*
+            fn from(val: GlobalErrors<E>) -> #ty {
+                match val {
+                    #match_from
                     _ => unreachable!(),
                 }
             }
