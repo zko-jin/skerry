@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{Item, ItemMod, parse_macro_input};
 
-pub fn error_module(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn skerry_mod(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_mod = parse_macro_input!(item as ItemMod);
 
     let (_, items) = input_mod

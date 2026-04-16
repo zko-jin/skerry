@@ -22,7 +22,7 @@ impl VisitMut for QuestionMarkTransformer {
     }
 }
 
-pub fn fn_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn skerry_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input_fn = parse_macro_input!(item as ItemFn);
 
     let mut transformer = QuestionMarkTransformer;

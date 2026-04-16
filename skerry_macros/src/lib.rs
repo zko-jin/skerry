@@ -10,9 +10,9 @@ use syn::{
 };
 
 mod internal {
-    pub mod error_module;
-    pub mod fn_error;
     pub mod impl_missing_converts;
+    pub mod skerry_fn;
+    pub mod skerry_mod;
 }
 
 #[proc_macro]
@@ -27,15 +27,15 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
 /// # Syntax
 /// ```rust,ignore
 /// # use skerry::*;
-/// #[error_module]
+/// #[skerry_mod]
 /// mod errors {
 ///     struct ErrorA;
 ///     struct ErrorB;
 ///     struct LocalError;
 /// }
-/// #[fn_error]
+/// #[skerry_fn]
 /// pub fn passthrough() -> Result<(), (ErrorA, ErrorB)> { ... }
-/// #[fn_error]
+/// #[skerry_fn]
 /// pub fn perform_task() -> Result<(), (LocalError, &PassthroughErr)> { ... }
 /// ```
 ///
@@ -54,20 +54,20 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
 /// add them for semantic reasons (e.g., &PassThroughErr Contains LocalErr
 /// already but you added it again).
 #[proc_macro_attribute]
-pub fn fn_error(attr: TokenStream, item: TokenStream) -> TokenStream {
-    crate::internal::fn_error::fn_error(attr, item)
+pub fn skerry_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
+    crate::internal::skerry_fn::skerry_fn(attr, item)
 }
 
 /// A container macro used to define the boundaries of an error-handling module.
 ///
-/// This macro ensures that all `fn_error` definitions within the module share
+/// This macro ensures that all `skerry_fn` definitions within the module share
 /// the same `GlobalErrors` context and `GlobalErrorsIndices` mapping.
 ///
-/// ALL errors returned by fn_error are required to be defined in this module.
+/// ALL errors returned by `skerry_fn` are required to be defined in this module.
 ///
 /// # Syntax
 /// ```rust,ignore
-/// #[error_module]
+/// #[skerry_mod]
 /// mod errors { // The module itself is stripped by the macro later
 ///     struct ErrorA;
 ///     struct ErrorB;
@@ -75,8 +75,8 @@ pub fn fn_error(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 /// ```
 #[proc_macro_attribute]
-pub fn error_module(attr: TokenStream, item: TokenStream) -> TokenStream {
-    crate::internal::error_module::error_module(attr, item)
+pub fn skerry_mod(attr: TokenStream, item: TokenStream) -> TokenStream {
+    crate::internal::skerry_mod::skerry_mod(attr, item)
 }
 
 #[proc_macro]

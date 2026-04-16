@@ -131,7 +131,7 @@ mod macros;
 mod result;
 mod traits;
 
-pub use skerry_macros::{error_module, fn_error};
+pub use skerry_macros::{skerry_fn, skerry_mod};
 
 pub mod skerry_internals {
     pub use crate::{helpers::*, macros::*, traits::*};
@@ -143,7 +143,7 @@ mod test {
     extern crate self as skerry;
     pub use skerry::*;
 
-    #[error_module]
+    #[skerry_mod]
     pub mod errors {
         pub struct ErrA;
         pub struct ErrB;
@@ -154,17 +154,17 @@ mod test {
         pub struct ErrG;
     }
 
-    #[fn_error]
+    #[skerry_fn]
     fn my_fn1() -> Result<(), (ErrA, ErrB, ErrC)> {
         Err(MyFn1Error::ErrA(ErrA))
     }
 
-    #[fn_error]
+    #[skerry_fn]
     fn my_fn2() -> Result<(), (ErrE, ErrF, ErrG)> {
         Err(MyFn2Error::ErrE(ErrE))
     }
 
-    #[fn_error]
+    #[skerry_fn]
     pub fn my_fn3() -> Result<(), (ErrA, ErrB, ErrC, &MyFn2Error)> {
         my_fn2()?;
         my_fn1()?;
