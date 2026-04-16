@@ -2,7 +2,7 @@
 macro_rules! create_fn_error {
     ($type:ident, $fn_name:ident, [$($e:path),*], [$($starred:ident),*]) => {
         paste::paste! {
-            berrors::berrors_internals::expand_starred_lists! {
+            skerry::skerry_internals::expand_starred_lists! {
                 @step
                 target: [$type],
                 base: [$fn_name],
@@ -16,7 +16,7 @@ macro_rules! create_fn_error {
 #[macro_export]
 macro_rules! expand_starred_lists {
     (@step target: [$type:ident], base: [$fn_name:ident], accum: [$(,)? $($acc:path),*], remaining: []) => {
-        berrors::berrors_internals::create_fn_error_step!($type, $fn_name, $($acc),*);
+        skerry::skerry_internals::create_fn_error_step!($type, $fn_name, $($acc),*);
     };
 
     (@step target: [$type:ident], base: [$fn_name:ident], accum: [$(,)? $($acc:path),*], remaining: [$next_macro:ident $(, $rest:ident)*]) => {

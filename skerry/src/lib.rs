@@ -7,17 +7,17 @@ mod macros;
 mod result;
 mod traits;
 
-pub use proc_berrors::{error_module, fn_error};
+pub use skerry_macros::{error_module, fn_error};
 
-pub mod berrors_internals {
+pub mod skerry_internals {
     pub use crate::{helpers::*, macros::*, traits::*};
-    pub use proc_berrors::*;
+    pub use skerry_macros::*;
 }
 
 // #[cfg(test)]
 mod test {
-    extern crate self as berrors;
-    pub use berrors::*;
+    extern crate self as skerry;
+    pub use skerry::*;
 
     #[error_module]
     pub mod errors {

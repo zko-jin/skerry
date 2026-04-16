@@ -2,12 +2,12 @@ use std::collections::HashSet;
 
 use proc_macro::TokenStream;
 use proc_macro2::{TokenStream as TokenStream2, TokenTree};
-use quote::{ToTokens, format_ident, quote};
+use quote::{format_ident, quote, ToTokens};
 use syn::{
-    GenericArgument, Ident, Item, ItemFn, ItemMod, Path, PathArguments, ReturnType, Token, Type,
     parse::{Parse, ParseStream},
     parse_macro_input, parse_quote,
     punctuated::Punctuated,
+    GenericArgument, Ident, Item, ItemFn, ItemMod, Path, PathArguments, ReturnType, Token, Type,
 };
 
 /// An attribute macro to automate function-specific error handling.
@@ -151,7 +151,7 @@ pub fn fn_error(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     let expanded = quote! {
-        berrors::berrors_internals::create_fn_error!(
+        skerry::skerry_internals::create_fn_error!(
             #base_path,
             #struct_ident,
             #fn_name,
@@ -222,22 +222,22 @@ pub fn error_module(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
 
-        impl berrors::berrors_internals::Indexable for GlobalErrorsIndices {}
+        impl skerry::skerry_internals::Indexable for GlobalErrorsIndices {}
 
         #(
-            impl berrors::berrors_internals::ErrCode<GlobalErrorsIndices> for #struct_names {
+            impl skerry::skerry_internals::ErrCode<GlobalErrorsIndices> for #struct_names {
                 const CODE: GlobalErrorsIndices = GlobalErrorsIndices::#struct_names;
             }
         )*
 
-        pub enum GlobalErrors<E: berrors::berrors_internals::ComparableError<GlobalErrorsIndices>> {
+        pub enum GlobalErrors<E: skerry::skerry_internals::ComparableError<GlobalErrorsIndices>> {
             #(
                 #struct_names(#struct_names),
             )*
             _PHANTOM(std::marker::PhantomData<E>)
         }
 
-        impl<E: berrors::berrors_internals::ComparableError<GlobalErrorsIndices>> GlobalErrors<E> {
+        impl<E: skerry::skerry_internals::ComparableError<GlobalErrorsIndices>> GlobalErrors<E> {
             pub const fn code_to_str(code: GlobalErrorsIndices) -> &'static str {
                 match code {
                     #(
@@ -338,7 +338,7 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
         #[macro_export]
         macro_rules! #macro_ident {
             (@callback target: [$type:ident], base: [$base:path, $fn_name:ident], accum: [$($acc:path),*], remaining: [$($rem:ident),*]) => {
-                berrors::berrors_internals::expand_starred_lists! {
+                skerry::skerry_internals::expand_starred_lists! {
                     @step
                     target: [$type],
                     base: [$base, $fn_name],
@@ -392,21 +392,21 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
             }
         )*
 
-        impl berrors::berrors_internals::ComparableError<#base_path::GlobalErrorsIndices> for #ty {
+        impl skerry::skerry_internals::ComparableError<#base_path::GlobalErrorsIndices> for #ty {
             const NAME: &'static str = stringify!(#ty);
 
             const CODES: &'static [#base_path::GlobalErrorsIndices] = &[
                 #(
-                    <#deduped as berrors::berrors_internals::ErrCode<#base_path::GlobalErrorsIndices>>::CODE,
+                    <#deduped as skerry::skerry_internals::ErrCode<#base_path::GlobalErrorsIndices>>::CODE,
                 )*
             ];
         }
 
         impl #ty {
             #[track_caller]
-            const fn check<E: berrors::berrors_internals::ComparableError<#base_path::GlobalErrorsIndices>>() {
-                use berrors::berrors_internals::ComparableError;
-                let mut not_found_types = berrors::berrors_internals::ConstantStrVec::new();
+            const fn check<E: skerry::skerry_internals::ComparableError<#base_path::GlobalErrorsIndices>>() {
+                use skerry::skerry_internals::ComparableError;
+                let mut not_found_types = skerry::skerry_internals::ConstantStrVec::new();
 
                 let mut index = 0;
                 let len = #ty::CODES.len();
@@ -459,7 +459,7 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl<T, E: berrors::berrors_internals::ComparableError<#base_path::GlobalErrorsIndices>>
+        impl<T, E: skerry::skerry_internals::ComparableError<#base_path::GlobalErrorsIndices>>
             std::ops::FromResidual<#base_path::GlobalErrors<E>> for #base_path::Result<T, #ty>
         {
             fn from_residual(residual: #base_path::GlobalErrors<E>) -> #base_path::Result<T, #ty> {

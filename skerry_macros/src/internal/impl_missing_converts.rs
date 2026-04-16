@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    Ident, Path, Token, bracketed,
+    bracketed,
     parse::{Parse, ParseStream},
-    parse_macro_input,
+    parse_macro_input, Ident, Path, Token,
 };
 
 struct MacroInput {
@@ -66,10 +66,10 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         #(
-            impl const berrors::berrors_internals::MissingConvert<#filtered> for #ty {}
+            impl const skerry::skerry_internals::MissingConvert<#filtered> for #ty {}
         )*
 
-        impl<T, E: berrors::berrors_internals::ComparableError #( + berrors::berrors_internals::MissingConvert<#filtered>)*>
+        impl<T, E: skerry::skerry_internals::ComparableError #( + skerry::skerry_internals::MissingConvert<#filtered>)*>
             std::ops::FromResidual<GlobalErrors<E>> for Result<T, #ty>
         {
             fn from_residual(residual: GlobalErrors<E>) -> Result<T, #ty> {

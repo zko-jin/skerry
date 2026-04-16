@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Item, ItemMod, parse_macro_input};
+use syn::{parse_macro_input, Item, ItemMod};
 
 pub fn error_module(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_mod = parse_macro_input!(item as ItemMod);
@@ -59,9 +59,9 @@ pub fn error_module(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 
         #[macro_export]
-        macro_rules! berrors_impl_missing_errors {
+        macro_rules! skerry_impl_missing_errors {
             ($ty:ty, [$($v:ident),*]) => {
-                berrors::berrors_internals::impl_missing_converts!(
+                skerry::skerry_internals::impl_missing_converts!(
                     $ty,
                     [#(#struct_names),*],
                     [$($v),*]
@@ -70,19 +70,19 @@ pub fn error_module(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         #(
-            impl berrors::berrors_internals::ErrCode for #struct_names {
+            impl skerry::skerry_internals::ErrCode for #struct_names {
                 const CODE: &'static str = stringify!(#struct_names);
             }
         )*
 
-        pub enum GlobalErrors<E: berrors::berrors_internals::ComparableError> {
+        pub enum GlobalErrors<E: skerry::skerry_internals::ComparableError> {
             #(
                 #struct_names(#struct_names),
             )*
             _PHANTOM(std::marker::PhantomData<E>)
         }
 
-        // impl<E: berrors::berrors_internals::ComparableError<GlobalErrorsIndices>> GlobalErrors<E> {
+        // impl<E: skerry::skerry_internals::ComparableError<GlobalErrorsIndices>> GlobalErrors<E> {
         //     pub const fn code_to_str(code: GlobalErrorsIndices) -> &'static str {
         //         match code {
         //             #(

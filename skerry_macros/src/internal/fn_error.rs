@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
 use proc_macro2::{TokenStream as TokenStream2, TokenTree};
-use quote::{ToTokens, format_ident, quote};
+use quote::{format_ident, quote, ToTokens};
 use syn::{
-    GenericArgument, ItemFn, PathArguments, ReturnType, Type, parse_macro_input, parse_quote,
+    parse_macro_input, parse_quote, GenericArgument, ItemFn, PathArguments, ReturnType, Type,
 };
 
 pub fn fn_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -106,7 +106,7 @@ pub fn fn_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     let expanded = quote! {
-        berrors::berrors_internals::create_fn_error!(
+        skerry::skerry_internals::create_fn_error!(
             #struct_ident,
             #fn_name,
             [#(#normal_errors),*],

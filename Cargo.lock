@@ -3,15 +3,6 @@
 version = 4
 
 [[package]]
-name = "berrors"
-version = "0.1.0"
-dependencies = [
- "const_panic",
- "paste",
- "proc_berrors",
-]
-
-[[package]]
 name = "const_panic"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -36,21 +27,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc_berrors"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
 dependencies = [
  "proc-macro2",
+]
+
+[[package]]
+name = "skerry"
+version = "0.1.0"
+dependencies = [
+ "const_panic",
+ "paste",
+ "skerry_macros",
+]
+
+[[package]]
+name = "skerry_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

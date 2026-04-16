@@ -26,7 +26,7 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
 ///
 /// # Syntax
 /// ```rust,ignore
-/// # use berrors::*;
+/// # use skerry::*;
 /// #[error_module]
 /// mod errors {
 ///     struct ErrorA;
@@ -160,7 +160,7 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
         #[macro_export]
         macro_rules! #macro_ident {
             (@callback target: [$type:ident], base: [$fn_name:ident], accum: [$($acc:path),*], remaining: [$($rem:ident),*]) => {
-                berrors::berrors_internals::expand_starred_lists! {
+                skerry::skerry_internals::expand_starred_lists! {
                     @step
                     target: [$type],
                     base: [$fn_name],
@@ -180,7 +180,7 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
             )*
         }
 
-        berrors_impl_missing_errors!(#ty, [#(#variants),*]);
+        skerry_impl_missing_errors!(#ty, [#(#variants),*]);
 
         impl Into<GlobalErrors<#ty>> for #ty {
             fn into(self) -> GlobalErrors<#ty> {
@@ -217,21 +217,21 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
             // }
         )*
 
-        impl berrors::berrors_internals::ComparableError for #ty {
+        impl skerry::skerry_internals::ComparableError for #ty {
             const NAME: &'static str = stringify!(#ty);
 
             const CODES: &'static [&'static str] = &[
                 #(
-                    <#deduped as berrors::berrors_internals::ErrCode>::CODE,
+                    <#deduped as skerry::skerry_internals::ErrCode>::CODE,
                 )*
             ];
         }
 
         // impl #ty {
         //     #[track_caller]
-        //     const fn check<E: berrors::berrors_internals::ComparableError>() {
-        //         use berrors::berrors_internals::ComparableError;
-        //         let mut not_found_types = berrors::berrors_internals::ConstantStrVec::new();
+        //     const fn check<E: skerry::skerry_internals::ComparableError>() {
+        //         use skerry::skerry_internals::ComparableError;
+        //         let mut not_found_types = skerry::skerry_internals::ConstantStrVec::new();
 
         //         let mut index = 0;
         //         let len = #ty::CODES.len();
