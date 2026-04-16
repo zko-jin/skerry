@@ -1,5 +1,9 @@
 //! # Skerry: Super Kool ERRors Yoh
 //!
+//! Known Issues:
+//! - There's no macro for handling `impl` blocks
+//! - Same for `trait` blocks
+//!
 //! Skerry is a type-safe error management framework designed to kill boilerplate.
 //! It allows you to define a global error set while returning granular, function-specific
 //! enums that are automatically generated at compile-time.
