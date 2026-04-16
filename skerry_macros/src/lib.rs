@@ -55,7 +55,15 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
 /// already but you added it again).
 #[proc_macro_attribute]
 pub fn skerry_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
-    crate::internal::skerry_fn::skerry_fn(attr, item)
+    match crate::internal::skerry_fn::skerry_fn(attr, item) {
+        Ok((def, input)) => quote! {
+            #def
+
+            #input
+        }
+        .into(),
+        Err(e) => e,
+    }
 }
 
 /// A container macro used to define the boundaries of an error-handling module.

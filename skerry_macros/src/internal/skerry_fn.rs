@@ -1,10 +1,9 @@
 use proc_macro::TokenStream;
 use proc_macro2::{TokenStream as TokenStream2, TokenTree};
 use quote::{ToTokens, format_ident, quote};
-use syn::visit_mut::{self, VisitMut};
-use syn::{Expr, ExprTry};
 use syn::{
-    GenericArgument, ItemFn, PathArguments, ReturnType, Type, parse_macro_input, parse_quote,
+    Expr, ExprTry, GenericArgument, ItemFn, PathArguments, ReturnType, Type, parse_quote,
+    visit_mut::{self, VisitMut},
 };
 
 struct QuestionMarkTransformer;
@@ -22,8 +21,17 @@ impl VisitMut for QuestionMarkTransformer {
     }
 }
 
-pub fn skerry_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let mut input_fn = parse_macro_input!(item as ItemFn);
+/// Returns (Definitions, Function)
+pub fn skerry_fn(
+    _attr: TokenStream,
+    item: TokenStream,
+) -> Result<(TokenStream2, TokenStream2), TokenStream> {
+    let mut input_fn = match syn::parse::<ItemFn>(item) {
+        syn::__private::Ok(data) => data,
+        syn::__private::Err(err) => {
+            return Err(syn::__private::TokenStream::from(err.to_compile_error()));
+        }
+    };
 
     let mut transformer = QuestionMarkTransformer;
     transformer.visit_item_fn_mut(&mut input_fn);
@@ -133,9 +141,11 @@ pub fn skerry_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
             [#(#normal_errors),*],
             [#(#passthrough_errors),*]
         );
+    };
 
+    let input = quote! {
         #input_fn
     };
 
-    TokenStream::from(expanded)
+    Ok((expanded, input))
 }
