@@ -25,7 +25,8 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
 /// Creates a unique error enum for the function named `{FunctionName}Error`.
 ///
 /// # Syntax
-/// ```rust
+/// ```rust,ignore
+/// # use berrors::*;
 /// #[error_module]
 /// mod errors {
 ///     struct ErrorA;
@@ -65,7 +66,7 @@ pub fn fn_error(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ALL errors returned by fn_error are required to be defined in this module.
 ///
 /// # Syntax
-/// ```rust
+/// ```rust,ignore
 /// #[error_module]
 /// mod errors { // The module itself is stripped by the macro later
 ///     struct ErrorA;
