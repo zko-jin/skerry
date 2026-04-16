@@ -128,7 +128,6 @@
 
 mod helpers;
 mod macros;
-mod result;
 mod traits;
 
 pub use skerry_macros::{skerry_fn, skerry_mod};
