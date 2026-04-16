@@ -12,6 +12,7 @@ use syn::{
 mod internal {
     pub mod impl_missing_converts;
     pub mod skerry_fn;
+    pub mod skerry_impl;
     pub mod skerry_mod;
 }
 
@@ -55,7 +56,7 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
 /// already but you added it again).
 #[proc_macro_attribute]
 pub fn skerry_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
-    match crate::internal::skerry_fn::skerry_fn(attr, item) {
+    match crate::internal::skerry_fn::skerry_fn(attr, item, None) {
         Ok((def, input)) => quote! {
             #def
 
@@ -64,6 +65,11 @@ pub fn skerry_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into(),
         Err(e) => e,
     }
+}
+
+#[proc_macro_attribute]
+pub fn skerry_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
+    crate::internal::skerry_impl::skerry_impl(attr, item)
 }
 
 /// A container macro used to define the boundaries of an error-handling module.

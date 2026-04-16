@@ -25,6 +25,7 @@ impl VisitMut for QuestionMarkTransformer {
 pub fn skerry_fn(
     _attr: TokenStream,
     item: TokenStream,
+    prefix: Option<&syn::Ident>,
 ) -> Result<(TokenStream2, TokenStream2), TokenStream> {
     let mut input_fn = match syn::parse::<ItemFn>(item) {
         syn::__private::Ok(data) => data,
@@ -36,7 +37,22 @@ pub fn skerry_fn(
     let mut transformer = QuestionMarkTransformer;
     transformer.visit_item_fn_mut(&mut input_fn);
 
-    let fn_name = &input_fn.sig.ident;
+    let formatted_prefix = match prefix {
+        Some(p) => {
+            let mut formatted = String::new();
+            for (i, c) in p.to_string().chars().enumerate() {
+                if c.is_uppercase() && i != 0 {
+                    formatted.push('_');
+                }
+                formatted.extend(c.to_lowercase());
+            }
+            formatted.push('_');
+            formatted
+        }
+        None => String::new(),
+    };
+
+    let fn_name = format_ident!("{}{}", formatted_prefix, &input_fn.sig.ident.to_string());
 
     // 2. Derive Names
     let struct_name_str = fn_name

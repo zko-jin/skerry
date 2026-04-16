@@ -5,11 +5,19 @@
 //! use skerry::*;
 //!
 //! // 1. Define your error boundary
+//! # struct ErrorFromLib;
 //! #[skerry_mod]
 //! pub mod errors {
 //!     pub struct DatabaseErr;
 //!     pub struct AuthErr;
 //!     pub struct ValidationErr;
+//!
+//!     pub struct LibErr(ErrorFromLib);
+//!     impl From<ErrorFromLib> for LibErr {
+//!         fn from(val: ErrorFromLib) -> Self {
+//!             Self(val)
+//!         }
+//!     }
 //! }
 //!
 //! // 2. Generate a 'low_level' error enum automatically
@@ -18,18 +26,23 @@
 //!     Err(CheckAuthError::AuthErr(AuthErr))
 //! }
 //!
+//! # fn lib_fn_that_returns_error() -> Result<(), ErrorFromLib> {
+//! #   Err(ErrorFromLib)
+//! # }
+//!
 //! // 3. Use '&' to expand and bubble up sub-errors seamlessly
 //! #[skerry_fn]
-//! pub fn Controller() -> Result<(), (ValidationErr, &CheckAuthError)> {
+//! pub fn Controller() -> Result<(), (ValidationErr, LibErr, &CheckAuthError)> {
 //!     // ValidationErr is local, AuthErr is pulled in from check_auth via '&'
 //!     check_auth()?;
+//!
+//!     // You can also automatically bubble up library errors as long as an error from
+//!     // `#[skerry_mod]` implements `From` for it
+//!     lib_fn_that_returns_error()?;
+//!
 //!     Ok(())
 //! }
 //! ```
-//!
-//! Known Issues:
-//! - There's no macro for handling `impl` blocks
-//! - Same for `trait` blocks
 //!
 //! Skerry is a type-safe error management framework designed to kill boilerplate.
 //! It allows you to define a global error set while returning granular, function-specific
@@ -47,7 +60,7 @@
 //! Every project needs one module (usually `errors.rs`) that acts as the source of truth.
 //!
 //! ```rust
-//! pub use skerry::*; // Required to be pub for easier macro expansions
+//! pub use skerry::*; // Recommended to be pub for easier macro expansions
 //!
 //! #[skerry_mod]
 //! mod errors {
@@ -153,6 +166,46 @@
 //!     ErrC(ErrC),
 //! }
 //! ```
+//! ## Using Skerry inside Impl Blocks
+//!
+//! Skerry provides the `#[skerry_impl]` attribute to handle methods within `impl` blocks.
+//! This attribute coordinates with `#[skerry_fn]` to split the generated code:
+//!
+//! 1.  **Top-Level**: The error enums are generated outside the `impl` block.
+//! 2.  **Method-Level**: The method signature is updated, and all `?` operators are
+//!     automatically transformed to wrap errors into `GlobalErrors`.
+//!
+//! ### Example
+//!
+//! ```rust
+//! use skerry::*;
+//!
+//! # #[skerry_mod]
+//! # mod errors {
+//! #   pub struct ConnectionFailed;
+//! # }
+//! # #[skerry_fn]
+//! # pub fn remote_call() -> Result<(), (ConnectionFailed)> {
+//! #    Ok(())
+//! # }
+//! #
+//! pub struct Database;
+//!
+//! #[skerry_impl(prefix(Database))] // Optional prefix for functions inside impl block
+//! impl Database {
+//!     #[skerry_fn]
+//!     pub fn connect(&self) -> Result<(), (&RemoteCallError)> {
+//!         remote_call()?;
+//!         Ok(())
+//!     }
+//! }
+//!
+//! fn main() {
+//!     let db = Database;
+//!     let result: Result<(), DatabaseConnectError> = db.connect();
+//!     assert!(result.is_ok());
+//! }
+//! ```
 //!
 //! ---
 //!
@@ -167,7 +220,7 @@
 mod helpers;
 mod macros;
 mod traits;
-pub use skerry_macros::{skerry_fn, skerry_mod};
+pub use skerry_macros::{skerry_fn, skerry_impl, skerry_mod};
 
 pub mod skerry_internals {
     pub use crate::{helpers::*, macros::*, traits::*};
@@ -179,6 +232,8 @@ mod test {
     extern crate self as skerry;
     pub use skerry::*;
 
+    pub struct OuterErrorFromLib;
+
     #[skerry_mod]
     pub mod errors {
         pub struct ErrA;
@@ -187,7 +242,13 @@ mod test {
         pub struct ErrD;
         pub struct ErrE;
         pub struct ErrF;
-        pub struct ErrG;
+        pub struct Outer(OuterErrorFromLib);
+
+        impl From<OuterErrorFromLib> for Outer {
+            fn from(val: OuterErrorFromLib) -> Self {
+                Self(val)
+            }
+        }
     }
 
     #[skerry_fn]
@@ -196,8 +257,11 @@ mod test {
     }
 
     #[skerry_fn]
-    fn my_fn2() -> Result<(), (ErrE, ErrF, ErrG)> {
-        Err(MyFn2Error::ErrE(ErrE))
+    fn my_fn2() -> Result<(), (ErrE, ErrF, Outer)> {
+        let r: Result<(), OuterErrorFromLib> = Err(OuterErrorFromLib);
+        let _ = r?;
+
+        Ok(())
     }
 
     #[skerry_fn]
@@ -205,6 +269,17 @@ mod test {
         my_fn2()?;
         my_fn1()?;
         Ok(())
+    }
+
+    pub struct MyStruct;
+
+    #[skerry_impl(prefix(MyStruct))]
+    impl MyStruct {
+        #[skerry_fn]
+        pub fn struct_fn() -> Result<(), (&MyFn3Error)> {
+            my_fn3()?;
+            Ok(())
+        }
     }
 
     #[test]
