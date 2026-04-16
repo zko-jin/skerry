@@ -3,9 +3,9 @@ use std::collections::HashSet;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    bracketed,
+    Ident, Path, Token, bracketed,
     parse::{Parse, ParseStream},
-    parse_macro_input, Ident, Path, Token,
+    parse_macro_input,
 };
 
 struct MacroInput {
@@ -66,7 +66,7 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {
         #(
-            impl const skerry::skerry_internals::MissingConvert<#filtered> for #ty {}
+            impl skerry::skerry_internals::MissingConvert<#filtered> for #ty {}
         )*
 
         impl<T, E: skerry::skerry_internals::ComparableError #( + skerry::skerry_internals::MissingConvert<#filtered>)*>

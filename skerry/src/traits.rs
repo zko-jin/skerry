@@ -1,8 +1,8 @@
-pub const trait ComparableError {
+pub trait ComparableError {
     const NAME: &'static str;
     const CODES: &'static [&'static str];
 }
-pub const trait ErrCode {
+pub trait ErrCode {
     const CODE: &'static str;
 }
 
@@ -11,4 +11,4 @@ pub const trait ErrCode {
 // '{Self}'",     label = "this error is missing from the #[fn_error] list",
 //     note = "Add '{E}' to your #[fn_error(...)] attribute to allow this
 // conversion." )]V
-pub const trait MissingConvert<T> {}
+pub trait MissingConvert<T> {}
