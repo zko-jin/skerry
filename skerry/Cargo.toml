@@ -6,7 +6,7 @@ authors = ["Zkojin <zkojin@proton.me>"]
 description = "Super Kool ERRors Yoh - A type-safe, zero-boilerplate error management framework."
 documentation = "https://docs.rs/skerry"
 repository = "https://github.com/zko-jin/skerry"
-readme = "README.md"
+readme = "../README.md"
 keywords = ["error", "proc-macro", "result", "boilerplate", "type-safety"]
 categories = ["rust-patterns", "development-tools"]
 license = "MIT"
@@ -14,4 +14,4 @@ license = "MIT"
 [dependencies]
 const_panic = "0.2.15"
 paste = "1.0.15"
-skerry_macros = { path = "../skerry_macros" }
+skerry_macros = { version = "0.1.0", path = "../skerry_macros" }
