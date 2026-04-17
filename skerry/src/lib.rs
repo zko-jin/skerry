@@ -327,12 +327,14 @@ mod test {
         Ok(())
     }
 
+    define_error!(DefineTest, [ErrA]);
+
     pub struct MyStruct;
 
     #[skerry_impl(prefix(MyStruct))]
     impl MyStruct {
         #[skerry_fn]
-        pub fn struct_fn() -> Result<(), e![*MyFn3Error]> {
+        pub fn struct_fn() -> Result<(), e![*DefineTest, *MyFn3Error]> {
             my_fn3()?;
             Ok(())
         }
@@ -360,6 +362,12 @@ mod test {
         fn test() -> Result<(), TestTraitTestError> {
             Ok(())
         }
+    }
+
+    #[skerry_fn]
+    fn no_expand_func() -> Result<(), MyFn3Error> {
+        let r: Result<(), MyFn2Error> = Err(MyFn2Error::ErrE(ErrE));
+        Ok(r?)
     }
 
     #[test]
