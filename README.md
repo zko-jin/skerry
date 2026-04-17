@@ -4,17 +4,17 @@ Example:
 ```rust
 use skerry::*;
 
-// Define your error boundary, there can be only one #[sherry_mod] in your project
+// There can be only one #[sherry_mod] in your project
 #[skerry_mod]
 pub mod errors {
-    pub struct DatabaseErr;
-    pub struct AuthErr;
-    pub struct ValidationErr;
+    pub struct DatabaseError;
+    pub struct AuthError;
+    pub struct ValidationError;
 
     pub struct InvalidParse;
 
-    pub struct LibErr(ErrorFromLib);
-    impl From<ErrorFromLib> for LibErr {
+    pub struct LibError(ErrorFromLib);
+    impl From<ErrorFromLib> for LibError {
         fn from(val: ErrorFromLib) -> Self {
             Self(val)
         }
@@ -23,8 +23,8 @@ pub mod errors {
 
 // Generates a CheckAuthError enum automatically
 #[skerry_fn]
-fn check_auth() -> Result<(), e![AuthErr]> {
-    Err(CheckAuthError::AuthErr(AuthErr))
+fn check_auth() -> Result<(), e![AuthError]> {
+    Err(CheckAuthError::AuthError(AuthError))
 }
 
 
@@ -34,12 +34,12 @@ struct Controller;
 impl Controller {
     // Use '*' to expand and bubble up sub-errors seamlessly.
     #[skerry_fn]
-    pub fn run() -> Result<(), e![ValidationErr, LibErr, *CheckAuthError]> {
-        // AuthErr is pulled in from check_auth via '*CheckAuthError'.
+    pub fn run() -> Result<(), e![LibError, *CheckAuthError]> {
+        // AuthError is pulled in from check_auth via '*CheckAuthError'
         check_auth()?;
 
-        // Automatically bubble up library errors as long as an error
-        // from `#[skerry_mod]` implements `From` for it.
+        // Automatically bubble up library errors as long as an
+        // error from `#[skerry_mod]` implements `From` for it.
         lib_fn_that_returns_error()?;
 
         Ok(())
@@ -53,13 +53,16 @@ trait ToJson {
 
 #[skerry_impl]
 impl ToJson for Controller {
-    // Whenever you do not want to generate a new error just don't use e![]
-    // this will instead reuse an existing error
+    // Whenever you do not want to generate a new error just don't
+    // use e![], this will instead reuse an existing error
     #[skerry_fn]
     fn to_json(&self) -> Result<(), ToJsonError> {
         Ok(())
     }
 }
+
+// Manually define composite errors like this
+define_error!(ManualDefine, [ValidationError, *ToJsonError]);
 ```
 
 ### Core Workflow
@@ -74,7 +77,8 @@ impl ToJson for Controller {
 Every project needs one module (usually `errors.rs`) that acts as the source of truth.
 
 ```rust
-pub use skerry::*; // Recommended to be pub for easier macro expansions
+// Recommended to be pub for easier macro expansions
+pub use skerry::*;
 
 #[skerry_mod]
 mod errors {
@@ -98,7 +102,8 @@ Skerry transforms this into a unique enum named `{FunctionName}Error`.
 #[skerry_fn]
 pub fn low_level() -> Result<(), e![ErrA, ErrB]> {
     // Generates LowLevelError { ErrA(ErrA), ErrB(ErrB) }
-    Err(LowLevelError::ErrA(ErrA)) // You can also type Err(ErrA.into())
+    Err(LowLevelError::ErrA(ErrA))
+    // You can also type Err(ErrA.into())
 }
 ```
 
@@ -115,9 +120,9 @@ variants from `OtherFnError` into your current function's list.
 ```rust
 #[skerry_fn]
 pub fn high_level() -> Result<(), e![ErrC, *LowLevelError]> {
-    // 1. Sees ErrC -> Adds variant
-    // 2. Sees *LowLevelError -> Inspects LowLevelError, finds (ErrA, ErrB)
-    // 3. Final HighLevelError contains variants: ErrA, ErrB, ErrC
+    // Sees ErrC -> Adds variant
+    // Sees *LowLevelError -> Inspects LowLevelError, finds (ErrA, ErrB)
+    // Final HighLevelError contains variants: ErrA, ErrB, ErrC
 
     low_level()?; // Bubbles up automatically
     Ok(())
@@ -130,7 +135,6 @@ The syntax below has the exact same effects, `*LowLevelError` is nothing more th
 #[skerry_fn]
 pub fn high_level() -> Result<(), e![ErrA, ErrB, ErrC]> {
     // ...
-    # Ok(())
 }
 ```
 
@@ -151,9 +155,6 @@ so error enums are generated outside the `impl` block.
 #### Example
 
 ```rust
-use skerry::*;
-
-#
 pub struct Database;
 
 #[skerry_impl(prefix(Database))] // Optional prefix for functions inside impl block
@@ -180,14 +181,24 @@ so error enums are generated outside the `trait` block.
 #### Example
 
 ```rust
-use skerry::*;
-
-#
-
-#[skerry_impl(prefix(ToJson))] // Optional prefix for functions inside trait block
+#[skerry_trait(prefix(ToJson))] // Optional prefix for functions inside trait block
 trait ToJson {
     #[skerry_fn]
-    pub fn parse(&self) -> Result<(), e![*ParseFailed]>;
+    fn parse(&self) -> Result<(), e![ParseFailed]>;
+}
+```
+## Manual Error Definitions
+
+Manually define composite errors using the `define_error!` macro.
+This allows you to skip needing a function to define errors.
+
+#### Example
+```rust
+define_error!(ManualDefine, [ErrorA, ErrorB]);
+
+#[skerry_fn]
+fn my_func_with_custom_error() -> Result<(), ManualDefine> {
+    Ok(())
 }
 ```
 ---

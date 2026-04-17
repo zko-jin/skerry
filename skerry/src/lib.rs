@@ -8,14 +8,14 @@
 //! # struct ErrorFromLib;
 //! #[skerry_mod]
 //! pub mod errors {
-//!     pub struct DatabaseErr;
-//!     pub struct AuthErr;
-//!     pub struct ValidationErr;
+//!     pub struct DatabaseError;
+//!     pub struct AuthError;
+//!     pub struct ValidationError;
 //!
 //!     pub struct InvalidParse;
 //!
-//!     pub struct LibErr(ErrorFromLib);
-//!     impl From<ErrorFromLib> for LibErr {
+//!     pub struct LibError(ErrorFromLib);
+//!     impl From<ErrorFromLib> for LibError {
 //!         fn from(val: ErrorFromLib) -> Self {
 //!             Self(val)
 //!         }
@@ -24,8 +24,8 @@
 //!
 //! // Generates a CheckAuthError enum automatically
 //! #[skerry_fn]
-//! fn check_auth() -> Result<(), e![AuthErr]> {
-//!     Err(CheckAuthError::AuthErr(AuthErr))
+//! fn check_auth() -> Result<(), e![AuthError]> {
+//!     Err(CheckAuthError::AuthError(AuthError))
 //! }
 //!
 //! # fn lib_fn_that_returns_error() -> Result<(), ErrorFromLib> {
@@ -38,8 +38,8 @@
 //! impl Controller {
 //!     // Use '*' to expand and bubble up sub-errors seamlessly.
 //!     #[skerry_fn]
-//!     pub fn run() -> Result<(), e![LibErr, *CheckAuthError]> {
-//!         // AuthErr is pulled in from check_auth via '*CheckAuthError'
+//!     pub fn run() -> Result<(), e![LibError, *CheckAuthError]> {
+//!         // AuthError is pulled in from check_auth via '*CheckAuthError'
 //!         check_auth()?;
 //!
 //!         // Automatically bubble up library errors as long as an
@@ -64,6 +64,9 @@
 //!         Ok(())
 //!     }
 //! }
+//!
+//! // Manually define composite errors like this
+//! define_error!(ManualDefine, [ValidationError, *ToJsonError]);
 //! ```
 //!
 //! ## Core Workflow
@@ -194,8 +197,7 @@
 //! ### Example
 //!
 //! ```rust
-//! use skerry::*;
-//!
+//! # use skerry::*;
 //! # #[skerry_mod]
 //! # mod errors {
 //! #   pub struct ConnectionFailed;
@@ -230,8 +232,7 @@
 //! ### Example
 //!
 //! ```rust
-//! use skerry::*;
-//!
+//! # use skerry::*;
 //! # #[skerry_mod]
 //! # mod errors {
 //! #   pub struct ParseFailed;
@@ -240,6 +241,26 @@
 //! trait ToJson {
 //!     #[skerry_fn]
 //!     fn parse(&self) -> Result<(), e![ParseFailed]>;
+//! }
+//! ```
+//! # Manual Error Definitions
+//!
+//! Manually define composite errors using the `define_error!` macro.
+//! This allows you to skip needing a function to define errors.
+//!
+//! ### Example
+//! ```rust
+//! # use skerry::*;
+//! # #[skerry_mod]
+//! # mod errors {
+//! #   pub struct ErrorA;
+//! #   pub struct ErrorB;
+//! # }
+//! define_error!(ManualDefine, [ErrorA, ErrorB]);
+//!
+//! #[skerry_fn]
+//! fn my_func_with_custom_error() -> Result<(), ManualDefine> {
+//!     Ok(())
 //! }
 //! ```
 //! ---
