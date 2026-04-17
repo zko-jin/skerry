@@ -26,11 +26,8 @@ pub fn skerry_trait(attr: TokenStream, item: TokenStream) -> TokenStream {
                     attr_args.prefix.as_ref(),
                 ) {
                     Ok((top_stream, method_stream)) => {
-                        // 1. Add the generated Enum/Macro call to the top-level bucket
                         top_level_code.extend(top_stream);
 
-                        // 2. Replace the current method with the transformed one
-                        // We parse it back into an TraitItemFn
                         match syn::parse2::<TraitItemFn>(method_stream) {
                             Ok(new_method) => *method = new_method,
                             Err(e) => return e.to_compile_error().into(),
@@ -42,7 +39,6 @@ pub fn skerry_trait(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    // Wrap everything back up
     let expanded = quote! {
         #top_level_code
 

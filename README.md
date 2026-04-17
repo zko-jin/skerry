@@ -4,12 +4,14 @@ Example:
 ```rust
 use skerry::*;
 
-// 1. Define your error boundary
+// Define your error boundary, there can be only one #[sherry_mod] in your project
 #[skerry_mod]
 pub mod errors {
     pub struct DatabaseErr;
     pub struct AuthErr;
     pub struct ValidationErr;
+
+    pub struct InvalidParse;
 
     pub struct LibErr(ErrorFromLib);
     impl From<ErrorFromLib> for LibErr {
@@ -19,36 +21,52 @@ pub mod errors {
     }
 }
 
-// 2. Generate a 'low_level' error enum automatically
+// Generates a CheckAuthError enum automatically
 #[skerry_fn]
-fn check_auth() -> Result<(), AuthErr> {
+fn check_auth() -> Result<(), e![AuthErr]> {
     Err(CheckAuthError::AuthErr(AuthErr))
 }
 
 
-// 3. Use '&' to expand and bubble up sub-errors seamlessly
-#[skerry_fn]
-pub fn Controller() -> Result<(), (ValidationErr, LibErr, &CheckAuthError)> {
-    // ValidationErr is local, AuthErr is pulled in from check_auth via '&'
-    check_auth()?;
+struct Controller;
 
-    // You can also automatically bubble up library errors as long as an error from
-    // `#[skerry_mod]` implements `From` for it
-    lib_fn_that_returns_error()?;
+#[skerry_impl(prefix(Controller))] // This allows #[skerry_fn] to run on impl blocks
+impl Controller {
+    // Use '*' to expand and bubble up sub-errors seamlessly.
+    #[skerry_fn]
+    pub fn run() -> Result<(), e![ValidationErr, LibErr, *CheckAuthError]> {
+        // AuthErr is pulled in from check_auth via '*CheckAuthError'.
+        check_auth()?;
 
-    Ok(())
+        // Automatically bubble up library errors as long as an error
+        // from `#[skerry_mod]` implements `From` for it.
+        lib_fn_that_returns_error()?;
+
+        Ok(())
+    }
+}
+#[skerry_trait]
+trait ToJson {
+    #[skerry_fn]
+    fn to_json(&self) -> Result<(), e![InvalidParse]>;
+}
+
+#[skerry_impl]
+impl ToJson for Controller {
+    // Whenever you do not want to generate a new error just don't use e![]
+    // this will instead reuse an existing error
+    #[skerry_fn]
+    fn to_json(&self) -> Result<(), ToJsonError> {
+        Ok(())
+    }
 }
 ```
 
-Skerry is a type-safe error management framework designed to kill boilerplate.
-It allows you to define a global error set while returning granular, function-specific
-enums that are automatically generated at compile-time.
-
 ### Core Workflow
 
-1. Define all possible error structs in a `#[skerry_mod]`.
-2. Mark functions with `#[skerry_fn]`.
-3. Use the `&` operator to bubble up errors from sub-functions without manually mapping variants.
+- Define all possible error structs in a `#[skerry_mod]`.
+- Mark functions with `#[skerry_fn]`.
+- Use the `*` operator to bubble up errors from sub-functions without manually mapping variants.
 
 ---
 
@@ -78,7 +96,7 @@ Skerry transforms this into a unique enum named `{FunctionName}Error`.
 
 ```rust
 #[skerry_fn]
-pub fn low_level() -> Result<(), (ErrA, ErrB)> {
+pub fn low_level() -> Result<(), e![ErrA, ErrB]> {
     // Generates LowLevelError { ErrA(ErrA), ErrB(ErrB) }
     Err(LowLevelError::ErrA(ErrA)) // You can also type Err(ErrA.into())
 }
@@ -86,20 +104,19 @@ pub fn low_level() -> Result<(), (ErrA, ErrB)> {
 
 ---
 
-### The Ampersand (`&`) Expansion
+### The Asterisk (`*`) Expansion
 
-The `&` operator is the heart of Skerry. When you put `&OtherFnError` in your return tuple:
+When you put `*OtherFnError` in your return array tt pulls all
+variants from `OtherFnError` into your current function's list.
 
-* **Expansion**: It pulls all variants from `OtherFnError` into your current function's list.
-* **Promotion**: It allows the `?` operator to work seamlessly for that function's return type.
 * **Deduplication**: Variants are deduplicated automatically. If `ErrA` is added manually
-  and also exists inside a `&` expansion, only one variant is generated.
+  and also exists inside a `*` expansion, only one variant is generated.
 
 ```rust
 #[skerry_fn]
-pub fn high_level() -> Result<(), (ErrC, &LowLevelError)> {
+pub fn high_level() -> Result<(), e![ErrC, *LowLevelError]> {
     // 1. Sees ErrC -> Adds variant
-    // 2. Sees &LowLevelError -> Inspects LowLevelError, finds (ErrA, ErrB)
+    // 2. Sees *LowLevelError -> Inspects LowLevelError, finds (ErrA, ErrB)
     // 3. Final HighLevelError contains variants: ErrA, ErrB, ErrC
 
     low_level()?; // Bubbles up automatically
@@ -107,11 +124,11 @@ pub fn high_level() -> Result<(), (ErrC, &LowLevelError)> {
 }
 ```
 
-The syntax below has the exact same effects, `&LowLevelError` is nothing more than syntatic sugar
+The syntax below has the exact same effects, `*LowLevelError` is nothing more than syntatic sugar
 
 ```rust
 #[skerry_fn]
-pub fn high_level() -> Result<(), (ErrA, ErrB, ErrC)> {
+pub fn high_level() -> Result<(), e![ErrA, ErrB, ErrC]> {
     // ...
     # Ok(())
 }
@@ -128,11 +145,8 @@ pub enum HighLevelError {
 ### Using Skerry inside Impl Blocks
 
 Skerry provides the `#[skerry_impl]` attribute to handle methods within `impl` blocks.
-This attribute coordinates with `#[skerry_fn]` to split the generated code:
-
-1.  **Top-Level**: The error enums are generated outside the `impl` block.
-2.  **Method-Level**: The method signature is updated, and all `?` operators are
-    automatically transformed to wrap errors into `GlobalErrors`.
+This attribute coordinates with `#[skerry_fn]` to split the generated code
+so error enums are generated outside the `impl` block.
 
 #### Example
 
@@ -145,7 +159,7 @@ pub struct Database;
 #[skerry_impl(prefix(Database))] // Optional prefix for functions inside impl block
 impl Database {
     #[skerry_fn]
-    pub fn connect(&self) -> Result<(), (&RemoteCallError)> {
+    pub fn connect(&self) -> Result<(), e![*RemoteCallError]> {
         remote_call()?;
         Ok(())
     }
