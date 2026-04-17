@@ -265,6 +265,7 @@ impl syn::parse::Parse for DefineErrorInput {
         })
     }
 }
+
 #[proc_macro]
 pub fn define_error(input: TokenStream) -> TokenStream {
     let DefineErrorInput {

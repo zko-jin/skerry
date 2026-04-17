@@ -270,8 +270,6 @@
 //! Skerry uses a custom trait system (`MissingConvert`) to verify error bounds at
 //! compile-time. If you try to use `?` on a function whose errors are not represented
 //! in your current return tuple, the compiler will refuse to build.
-#![allow(unused_features)]
-#![feature(try_trait_v2)]
 
 mod helpers;
 mod macros;
@@ -376,5 +374,6 @@ mod test {
         let _ = MyStruct::test();
         let _ = MyStruct::test_2();
         let _ = MyStruct::struct_fn_2();
+        let _ = no_expand_func();
     }
 }
