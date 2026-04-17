@@ -4,10 +4,13 @@ use syn::{
     Ident, ImplItem, ImplItemFn, ItemImpl, Token, parenthesized,
     parse::{Parse, ParseStream},
     parse_macro_input,
+    visit_mut::VisitMut,
 };
 
-struct ImplAttribute {
-    prefix: Option<Ident>,
+use crate::internal::skerry_fn::QuestionMarkTransformer;
+
+pub struct ImplAttribute {
+    pub prefix: Option<Ident>,
 }
 impl Parse for ImplAttribute {
     fn parse(input: ParseStream) -> syn::Result<Self> {
@@ -46,6 +49,7 @@ pub fn skerry_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input_impl = parse_macro_input!(item as ItemImpl);
     let mut top_level_code = quote! {};
     let attr_args = syn::parse_macro_input!(attr as ImplAttribute);
+    let is_trait_impl = input_impl.trait_.is_some();
 
     // Iterate through the items in the impl (methods, etc.)
     for item in &mut input_impl.items {
@@ -58,10 +62,18 @@ pub fn skerry_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             {
                 method.attrs.remove(pos);
 
+                // No need to expand the rest
+                if is_trait_impl {
+                    let mut transformer = QuestionMarkTransformer;
+                    transformer.visit_impl_item_fn_mut(method);
+
+                    continue;
+                }
+
                 // Convert method to TokenStream to pass to your logic
                 let method_tokens = quote!(#method).into();
 
-                match crate::internal::skerry_fn::skerry_fn(
+                match crate::internal::skerry_fn::skerry_fn_standard(
                     TokenStream::new(),
                     method_tokens,
                     attr_args.prefix.as_ref(),

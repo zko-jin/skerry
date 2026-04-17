@@ -14,6 +14,7 @@ mod internal {
     pub mod skerry_fn;
     pub mod skerry_impl;
     pub mod skerry_mod;
+    pub mod skerry_trait;
 }
 
 #[proc_macro]
@@ -56,7 +57,7 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
 /// already but you added it again).
 #[proc_macro_attribute]
 pub fn skerry_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
-    match crate::internal::skerry_fn::skerry_fn(attr, item, None) {
+    match crate::internal::skerry_fn::skerry_fn_standard(attr, item, None) {
         Ok((def, input)) => quote! {
             #def
 
@@ -67,9 +68,52 @@ pub fn skerry_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
+/// An attribute macro applied to **implementation blocks** (`impl`).
+///
+/// This macro enables the use of `#[skerry_fn]` inside the block and
+/// extracts those function definitions to the scope outside the block.
+///
+/// # Arguments
+/// * `prefix(Name)` - Optional. Sets the prefix for the generated external definitions.
+///
+/// # Example
+/// ```ignore
+/// #[skerry_impl(prefix(MyStruct))]
+/// impl MyStruct {
+///     #[skerry_fn]
+///     pub fn struct_fn() -> Result<(), &MyError> {
+///         // ...
+/// #       Ok(())
+///     }
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn skerry_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     crate::internal::skerry_impl::skerry_impl(attr, item)
+}
+
+/// An attribute macro applied to **trait definitions**.
+///
+/// This macro enables the use of `#[skerry_fn]` within a trait and
+/// pulls those definitions outside the trait block for Skerry processing.
+///
+/// # Arguments
+/// * `prefix(Name)` - Optional. Sets the prefix for the generated external definitions.
+///
+/// # Example
+/// ```ignore
+/// #[skerry_trait(prefix(MyTrait))]
+/// trait MyTrait {
+///     #[skerry_fn]
+///     fn test() -> Result<(), (ErrA, ErrB)> {
+///         // ...
+/// #       Ok(())
+///     }
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn skerry_trait(attr: TokenStream, item: TokenStream) -> TokenStream {
+    crate::internal::skerry_trait::skerry_trait(attr, item)
 }
 
 /// A container macro used to define the boundaries of an error-handling module.

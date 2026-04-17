@@ -4,13 +4,15 @@
 //! ```rust
 //! use skerry::*;
 //!
-//! // 1. Define your error boundary
+//! // Define your error boundary, there can be only one #[sherry_mod] in your project
 //! # struct ErrorFromLib;
 //! #[skerry_mod]
 //! pub mod errors {
 //!     pub struct DatabaseErr;
 //!     pub struct AuthErr;
 //!     pub struct ValidationErr;
+//!
+//!     pub struct InvalidParse;
 //!
 //!     pub struct LibErr(ErrorFromLib);
 //!     impl From<ErrorFromLib> for LibErr {
@@ -20,9 +22,9 @@
 //!     }
 //! }
 //!
-//! // 2. Generate a 'low_level' error enum automatically
+//! // Generates a CheckAuthError enum automatically
 //! #[skerry_fn]
-//! fn check_auth() -> Result<(), AuthErr> {
+//! fn check_auth() -> Result<(), e![AuthErr]> {
 //!     Err(CheckAuthError::AuthErr(AuthErr))
 //! }
 //!
@@ -30,29 +32,45 @@
 //! #   Err(ErrorFromLib)
 //! # }
 //!
-//! // 3. Use '&' to expand and bubble up sub-errors seamlessly
-//! #[skerry_fn]
-//! pub fn Controller() -> Result<(), (ValidationErr, LibErr, &CheckAuthError)> {
-//!     // ValidationErr is local, AuthErr is pulled in from check_auth via '&'
-//!     check_auth()?;
+//! struct Controller;
 //!
-//!     // You can also automatically bubble up library errors as long as an error from
-//!     // `#[skerry_mod]` implements `From` for it
-//!     lib_fn_that_returns_error()?;
+//! #[skerry_impl(prefix(Controller))] // This allows #[skerry_fn] to run on impl blocks
+//! impl Controller {
+//!     // Use '*' to expand and bubble up sub-errors seamlessly.
+//!     #[skerry_fn]
+//!     pub fn run() -> Result<(), e![ValidationErr, LibErr, *CheckAuthError]> {
+//!         // AuthErr is pulled in from check_auth via '*CheckAuthError'.
+//!         check_auth()?;
 //!
-//!     Ok(())
+//!         // Automatically bubble up library errors as long as an error
+//!         // from `#[skerry_mod]` implements `From` for it.
+//!         lib_fn_that_returns_error()?;
+//!
+//!         Ok(())
+//!     }
+//! }
+//! #[skerry_trait]
+//! trait ToJson {
+//!     #[skerry_fn]
+//!     fn to_json(&self) -> Result<(), e![InvalidParse]>;
+//! }
+//!
+//! #[skerry_impl]
+//! impl ToJson for Controller {
+//!     // Whenever you do not want to generate a new error just don't use e![]
+//!     // this will instead reuse an existing error
+//!     #[skerry_fn]
+//!     fn to_json(&self) -> Result<(), ToJsonError> {
+//!         Ok(())
+//!     }
 //! }
 //! ```
 //!
-//! Skerry is a type-safe error management framework designed to kill boilerplate.
-//! It allows you to define a global error set while returning granular, function-specific
-//! enums that are automatically generated at compile-time.
-//!
 //! ## Core Workflow
 //!
-//! 1. Define all possible error structs in a `#[skerry_mod]`.
-//! 2. Mark functions with `#[skerry_fn]`.
-//! 3. Use the `&` operator to bubble up errors from sub-functions without manually mapping variants.
+//! - Define all possible error structs in a `#[skerry_mod]`.
+//! - Mark functions with `#[skerry_fn]`.
+//! - Use the `*` operator to bubble up errors from sub-functions without manually mapping variants.
 //!
 //! ---
 //!
@@ -90,7 +108,7 @@
 //! #     pub struct DatabaseErr;
 //! # }
 //! #[skerry_fn]
-//! pub fn low_level() -> Result<(), (ErrA, ErrB)> {
+//! pub fn low_level() -> Result<(), e![ErrA, ErrB]> {
 //!     // Generates LowLevelError { ErrA(ErrA), ErrB(ErrB) }
 //!     Err(LowLevelError::ErrA(ErrA)) // You can also type Err(ErrA.into())
 //! }
@@ -98,14 +116,13 @@
 //!
 //! ---
 //!
-//! ## The Ampersand (`&`) Expansion
+//! ## The Asterisk (`*`) Expansion
 //!
-//! The `&` operator is the heart of Skerry. When you put `&OtherFnError` in your return tuple:
+//! When you put `*OtherFnError` in your return array tt pulls all
+//! variants from `OtherFnError` into your current function's list.
 //!
-//! * **Expansion**: It pulls all variants from `OtherFnError` into your current function's list.
-//! * **Promotion**: It allows the `?` operator to work seamlessly for that function's return type.
 //! * **Deduplication**: Variants are deduplicated automatically. If `ErrA` is added manually
-//!   and also exists inside a `&` expansion, only one variant is generated.
+//!   and also exists inside a `*` expansion, only one variant is generated.
 //!
 //! ```rust
 //! # pub use skerry::*;
@@ -117,14 +134,14 @@
 //! #     pub struct DatabaseErr;
 //! # }
 //! # #[skerry_fn]
-//! # pub fn low_level() -> Result<(), (ErrA, ErrB)> {
+//! # pub fn low_level() -> Result<(), e![ErrA, ErrB]> {
 //! #     // Generates LowLevelError { ErrA(ErrA), ErrB(ErrB) }
 //! #     Err(LowLevelError::ErrA(ErrA)) // You can also type Err(ErrA.into())
 //! # }
 //! #[skerry_fn]
-//! pub fn high_level() -> Result<(), (ErrC, &LowLevelError)> {
+//! pub fn high_level() -> Result<(), e![ErrC, *LowLevelError]> {
 //!     // 1. Sees ErrC -> Adds variant
-//!     // 2. Sees &LowLevelError -> Inspects LowLevelError, finds (ErrA, ErrB)
+//!     // 2. Sees *LowLevelError -> Inspects LowLevelError, finds (ErrA, ErrB)
 //!     // 3. Final HighLevelError contains variants: ErrA, ErrB, ErrC
 //!
 //!     low_level()?; // Bubbles up automatically
@@ -132,7 +149,7 @@
 //! }
 //! ```
 //!
-//! The syntax below has the exact same effects, `&LowLevelError` is nothing more than syntatic sugar
+//! The syntax below has the exact same effects, `*LowLevelError` is nothing more than syntatic sugar
 //!
 //! ```rust
 //! # pub use skerry::*;
@@ -144,12 +161,12 @@
 //! #     pub struct DatabaseErr;
 //! # }
 //! # #[skerry_fn]
-//! # pub fn low_level() -> Result<(), (ErrA, ErrB)> {
+//! # pub fn low_level() -> Result<(), e![ErrA, ErrB]> {
 //! #     // Generates LowLevelError { ErrA(ErrA), ErrB(ErrB) }
 //! #     Err(LowLevelError::ErrA(ErrA)) // You can also type Err(ErrA.into())
 //! # }
 //! #[skerry_fn]
-//! pub fn high_level() -> Result<(), (ErrA, ErrB, ErrC)> {
+//! pub fn high_level() -> Result<(), e![ErrA, ErrB, ErrC]> {
 //!     // ...
 //!     # Ok(())
 //! }
@@ -185,7 +202,7 @@
 //! #   pub struct ConnectionFailed;
 //! # }
 //! # #[skerry_fn]
-//! # pub fn remote_call() -> Result<(), (ConnectionFailed)> {
+//! # pub fn remote_call() -> Result<(), e![ConnectionFailed]> {
 //! #    Ok(())
 //! # }
 //! #
@@ -194,7 +211,7 @@
 //! #[skerry_impl(prefix(Database))] // Optional prefix for functions inside impl block
 //! impl Database {
 //!     #[skerry_fn]
-//!     pub fn connect(&self) -> Result<(), (&RemoteCallError)> {
+//!     pub fn connect(&self) -> Result<(), e![*RemoteCallError]> {
 //!         remote_call()?;
 //!         Ok(())
 //!     }
@@ -220,7 +237,7 @@
 mod helpers;
 mod macros;
 mod traits;
-pub use skerry_macros::{skerry_fn, skerry_impl, skerry_mod};
+pub use skerry_macros::{skerry_fn, skerry_impl, skerry_mod, skerry_trait};
 
 pub mod skerry_internals {
     pub use crate::{helpers::*, macros::*, traits::*};
@@ -252,12 +269,12 @@ mod test {
     }
 
     #[skerry_fn]
-    fn my_fn1() -> Result<(), (ErrA, ErrB, ErrC)> {
+    fn my_fn1() -> Result<(), e![ErrA, ErrB, ErrC]> {
         Err(MyFn1Error::ErrA(ErrA))
     }
 
     #[skerry_fn]
-    fn my_fn2() -> Result<(), (ErrE, ErrF, Outer)> {
+    fn my_fn2() -> Result<(), e![ErrE, ErrF, Outer]> {
         let r: Result<(), OuterErrorFromLib> = Err(OuterErrorFromLib);
         let _ = r?;
 
@@ -265,7 +282,7 @@ mod test {
     }
 
     #[skerry_fn]
-    pub fn my_fn3() -> Result<(), (ErrA, ErrB, ErrC, &MyFn2Error)> {
+    pub fn my_fn3() -> Result<(), e![ErrA, ErrB, ErrC, *MyFn2Error]> {
         my_fn2()?;
         my_fn1()?;
         Ok(())
@@ -276,8 +293,27 @@ mod test {
     #[skerry_impl(prefix(MyStruct))]
     impl MyStruct {
         #[skerry_fn]
-        pub fn struct_fn() -> Result<(), (&MyFn3Error)> {
+        pub fn struct_fn() -> Result<(), e![*MyFn3Error]> {
             my_fn3()?;
+            Ok(())
+        }
+
+        #[skerry_fn]
+        pub fn struct_fn_2() -> Result<(), e![*MyStructStructFnError]> {
+            Self::struct_fn()?;
+            Ok(())
+        }
+    }
+
+    #[skerry_trait(prefix(TestTrait))]
+    trait TestTrait {
+        #[skerry_fn]
+        fn test() -> Result<(), e![ErrA, ErrB, *MyFn3Error]>;
+    }
+
+    #[skerry_impl]
+    impl TestTrait for MyStruct {
+        fn test() -> Result<(), TestTraitTestError> {
             Ok(())
         }
     }
@@ -285,5 +321,7 @@ mod test {
     #[test]
     pub fn test() {
         let _ = my_fn3();
+        let _ = MyStruct::test();
+        let _ = MyStruct::struct_fn_2();
     }
 }
