@@ -121,9 +121,15 @@ fn process_skerry_logic(
     let expanded = match extract_errors_from_tokens(error_type_tokens) {
         Ok(Some((normal_errors, passthrough_errors))) => {
             // Name Formatting
-            let formatted_prefix = format_prefix(prefix);
-            let fn_name = format_ident!("{}{}", formatted_prefix, &input.sig.ident.to_string());
-            let struct_ident = format_error_struct_name(&fn_name.to_string());
+            let formatted_prefix = match prefix {
+                Some(i) => format_camel_case(&i.to_string()),
+                None => String::new(),
+            };
+            let struct_ident = format_ident!(
+                "{}{}Error",
+                formatted_prefix,
+                format_camel_case(&input.sig.ident.to_string())
+            );
 
             // Update Signature with the new Error Struct
             if let ReturnType::Type(_, ty) = &mut input.sig.output {
@@ -142,7 +148,6 @@ fn process_skerry_logic(
             quote! {
                 skerry::skerry_internals::create_fn_error!(
                     #struct_ident,
-                    #fn_name,
                     [#(#normal_errors),*],
                     [#(#passthrough_errors),*]
                 );
@@ -168,28 +173,20 @@ fn process_skerry_logic(
 }
 
 // Formats to snake_case
-fn format_prefix(prefix: Option<&syn::Ident>) -> String {
-    match prefix {
-        Some(p) => {
-            let s = p.to_string();
-            let mut formatted = String::new();
-            for (i, c) in s.chars().enumerate() {
-                if c.is_uppercase() && i != 0 {
-                    formatted.push('_');
-                }
-                formatted.extend(c.to_lowercase());
-            }
+pub fn format_snake_case(prefix: &str) -> String {
+    let mut formatted = String::new();
+    for (i, c) in prefix.chars().enumerate() {
+        if c.is_uppercase() && i != 0 {
             formatted.push('_');
-            formatted
         }
-        None => String::new(),
+        formatted.extend(c.to_lowercase());
     }
+    formatted
 }
 
-// Formats to CamelCase + Error
-fn format_error_struct_name(base: &str) -> syn::Ident {
-    let name = base
-        .split('_')
+// Formats to CamelCase
+fn format_camel_case(base: &str) -> String {
+    base.split('_')
         .map(|s| {
             let mut c = s.chars();
             match c.next() {
@@ -198,8 +195,6 @@ fn format_error_struct_name(base: &str) -> syn::Ident {
             }
         })
         .collect::<String>()
-        + "Error";
-    format_ident!("{}", name)
 }
 
 fn extract_errors_from_tokens(

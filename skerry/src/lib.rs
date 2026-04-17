@@ -236,10 +236,10 @@
 //! # mod errors {
 //! #   pub struct ParseFailed;
 //! # }
-//! #[skerry_impl(prefix(ToJson))] // Optional prefix for functions inside trait block
+//! #[skerry_trait(prefix(ToJson))] // Optional prefix for functions inside trait block
 //! trait ToJson {
 //!     #[skerry_fn]
-//!     pub fn parse(&self) -> Result<(), e![*ParseFailed]>;
+//!     fn parse(&self) -> Result<(), e![ParseFailed]>;
 //! }
 //! ```
 //! ---
@@ -327,6 +327,11 @@ mod test {
     trait TestTrait {
         #[skerry_fn]
         fn test() -> Result<(), e![ErrA, ErrB, *MyFn3Error]>;
+
+        #[skerry_fn]
+        fn test_2() -> Result<(), e![ErrA, ErrB, *MyFn3Error]> {
+            Ok(())
+        }
     }
 
     #[skerry_impl]
@@ -340,6 +345,7 @@ mod test {
     pub fn test() {
         let _ = my_fn3();
         let _ = MyStruct::test();
+        let _ = MyStruct::test_2();
         let _ = MyStruct::struct_fn_2();
     }
 }

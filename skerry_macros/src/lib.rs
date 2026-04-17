@@ -9,6 +9,8 @@ use syn::{
     punctuated::Punctuated,
 };
 
+use crate::internal::skerry_fn::format_snake_case;
+
 mod internal {
     pub mod impl_missing_converts;
     pub mod skerry_fn;
@@ -157,7 +159,6 @@ pub fn dedup(input: TokenStream) -> TokenStream {
 }
 
 struct Input {
-    fn_name: Ident,
     ty: Ident,
     errors: Vec<Path>,
 }
@@ -165,11 +166,9 @@ struct Input {
 impl Parse for Input {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let ty: Ident;
-        let fn_name: Ident;
 
         ty = input.parse()?;
         input.parse::<Token![,]>()?;
-        fn_name = input.parse()?;
 
         let mut errors = Vec::new();
         while !input.is_empty() {
@@ -181,21 +180,13 @@ impl Parse for Input {
             errors.push(input.parse()?);
         }
 
-        Ok(Input {
-            fn_name,
-            ty,
-            errors,
-        })
+        Ok(Input { ty, errors })
     }
 }
 
 #[proc_macro]
 pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
-    let Input {
-        fn_name,
-        ty,
-        errors,
-    } = parse_macro_input!(input as Input);
+    let Input { ty, errors } = parse_macro_input!(input as Input);
 
     let mut seen = HashSet::new();
     let mut deduped = Vec::new();
@@ -212,7 +203,7 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
         .map(|p| p.segments.last().unwrap().ident.clone())
         .collect();
 
-    let macro_ident = format_ident!("{}_error_list", fn_name);
+    let macro_ident = format_ident!("{}_errors", format_snake_case(&ty.to_string()));
 
     let expanded = quote! {
         #[macro_export]
