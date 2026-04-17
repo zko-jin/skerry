@@ -9,7 +9,7 @@ use syn::{
     punctuated::Punctuated,
 };
 
-use crate::internal::skerry_fn::format_snake_case;
+use crate::internal::skerry_fn::{format_snake_case, process_inner_errors, quote_error_gen};
 
 mod internal {
     pub mod impl_missing_converts;
@@ -245,4 +245,39 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+struct DefineErrorInput {
+    type_ident: Ident,
+    _comma: Token![,],
+    bracket: syn::token::Bracket,
+    inner_tokens: proc_macro2::TokenStream,
+}
+
+impl syn::parse::Parse for DefineErrorInput {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let content;
+        Ok(DefineErrorInput {
+            type_ident: input.parse()?,
+            _comma: input.parse()?,
+            bracket: syn::bracketed!(content in input),
+            inner_tokens: content.parse()?,
+        })
+    }
+}
+#[proc_macro]
+pub fn define_error(input: TokenStream) -> TokenStream {
+    let DefineErrorInput {
+        type_ident,
+        inner_tokens,
+        bracket,
+        ..
+    } = parse_macro_input!(input as DefineErrorInput);
+    let mut iter = inner_tokens.into_iter().peekable();
+    let errors = match process_inner_errors(&mut iter, bracket.span.join()) {
+        Ok(v) => v,
+        Err(e) => return e.into_compile_error().into(),
+    };
+
+    quote_error_gen(type_ident, errors).into()
 }

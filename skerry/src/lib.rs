@@ -255,7 +255,7 @@
 mod helpers;
 mod macros;
 mod traits;
-pub use skerry_macros::{skerry_fn, skerry_impl, skerry_mod, skerry_trait};
+pub use skerry_macros::{define_error, skerry_fn, skerry_impl, skerry_mod, skerry_trait};
 
 pub mod skerry_internals {
     pub use crate::{helpers::*, macros::*, traits::*};

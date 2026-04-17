@@ -119,7 +119,7 @@ fn process_skerry_logic(
     };
 
     let expanded = match extract_errors_from_tokens(error_type_tokens) {
-        Ok(Some((normal_errors, passthrough_errors))) => {
+        Ok(Some(errors)) => {
             // Name Formatting
             let formatted_prefix = match prefix {
                 Some(i) => format_camel_case(&i.to_string()),
@@ -145,13 +145,7 @@ fn process_skerry_logic(
             }
 
             // Reconstruct Output
-            quote! {
-                skerry::skerry_internals::create_fn_error!(
-                    #struct_ident,
-                    [#(#normal_errors),*],
-                    [#(#passthrough_errors),*]
-                );
-            }
+            quote_error_gen(struct_ident, errors)
         }
         Ok(None) => quote! {},
         Err(e) => return Err(TokenStream::from(e.to_compile_error())),
@@ -170,6 +164,18 @@ fn process_skerry_logic(
     };
 
     Ok((expanded, final_item))
+}
+
+pub fn quote_error_gen(
+    type_ident: Ident,
+    (normal_errors, passthrough_errors): (Vec<Ident>, Vec<Ident>),
+) -> TokenStream2 {
+    quote! { skerry::skerry_internals::create_fn_error!(
+            #type_ident,
+            [#(#normal_errors),*],
+            [#(#passthrough_errors),*]
+        );
+    }
 }
 
 // Formats to snake_case
@@ -214,7 +220,7 @@ fn extract_errors_from_tokens(
                             return Err(syn::Error::new(g.span(), "e! only accepts brackets []."));
                         }
                         let mut inner_stream = g.stream().into_iter().peekable();
-                        process_inner_errors(&mut inner_stream).map(|e| Some(e))
+                        process_inner_errors(&mut inner_stream, g.span()).map(|e| Some(e))
                     } else {
                         Err(syn::Error::new(p.span(), "e! only accepts brackets []."))
                     }
@@ -227,9 +233,17 @@ fn extract_errors_from_tokens(
     }
 }
 
-fn process_inner_errors(
+pub fn process_inner_errors(
     iter: &mut std::iter::Peekable<proc_macro2::token_stream::IntoIter>,
+    error_span: proc_macro2::Span,
 ) -> syn::Result<(Vec<Ident>, Vec<Ident>)> {
+    if iter.peek().is_none() {
+        return Err(syn::Error::new(
+            error_span,
+            "Cannot be empty; expected at least one error type",
+        ));
+    }
+
     let mut normal = Vec::new();
     let mut passthrough = Vec::new();
     while let Some(token) = iter.next() {
@@ -270,7 +284,7 @@ fn process_inner_errors(
                 _ => {
                     return Err(syn::Error::new(
                         next.span(),
-                        "Expected ',' between error types in e![...]",
+                        "Expected ',' between error types",
                     ));
                 }
             }
