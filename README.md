@@ -106,7 +106,7 @@ pub fn low_level() -> Result<(), e![ErrA, ErrB]> {
 
 ### The Asterisk (`*`) Expansion
 
-When you put `*OtherFnError` in your return array tt pulls all
+When you put `*OtherFnError` in your return array it pulls all
 variants from `OtherFnError` into your current function's list.
 
 * **Deduplication**: Variants are deduplicated automatically. If `ErrA` is added manually
@@ -171,7 +171,25 @@ fn main() {
     assert!(result.is_ok());
 }
 ```
+### Using Skerry inside Trait Blocks
 
+Skerry provides the `#[skerry_trait]` attribute to handle methods within `trait` blocks.
+This attribute coordinates with `#[skerry_fn]` to split the generated code
+so error enums are generated outside the `trait` block.
+
+#### Example
+
+```rust
+use skerry::*;
+
+#
+
+#[skerry_impl(prefix(ToJson))] // Optional prefix for functions inside trait block
+trait ToJson {
+    #[skerry_fn]
+    pub fn parse(&self) -> Result<(), e![*ParseFailed]>;
+}
+```
 ---
 
 ### Compile-Time Safety
