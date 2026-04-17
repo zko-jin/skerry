@@ -13,5 +13,4 @@ license = "MIT"
 
 [dependencies]
 skerry_macros = { version = "0.1.1", path = "../skerry_macros" }
-const_panic = "0.2.15"
 paste = "1.0.15"
