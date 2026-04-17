@@ -100,7 +100,6 @@ fn process_skerry_logic(
             // Extract the second generic argument (the Error part)
             if let PathArguments::AngleBracketed(args) = &last_seg.arguments {
                 if let Some(GenericArgument::Type(error_ty)) = args.args.iter().nth(1) {
-                    // Turn it into tokens for your [<...>] muncher
                     error_ty.to_token_stream()
                 } else {
                     return Err(
@@ -119,37 +118,38 @@ fn process_skerry_logic(
         );
     };
 
-    // Name Formatting
-    let formatted_prefix = format_prefix(prefix);
-    let fn_name = format_ident!("{}{}", formatted_prefix, &input.sig.ident.to_string());
-    let struct_ident = format_error_struct_name(&fn_name.to_string());
+    let expanded = match extract_errors_from_tokens(error_type_tokens) {
+        Ok(Some((normal_errors, passthrough_errors))) => {
+            // Name Formatting
+            let formatted_prefix = format_prefix(prefix);
+            let fn_name = format_ident!("{}{}", formatted_prefix, &input.sig.ident.to_string());
+            let struct_ident = format_error_struct_name(&fn_name.to_string());
 
-    let (normal_errors, passthrough_errors) = match extract_errors_from_tokens(error_type_tokens) {
-        Ok(v) => v,
-        Err(e) => return Err(TokenStream::from(e.to_compile_error())),
-    };
-
-    // Update Signature with the new Error Struct
-    if let ReturnType::Type(_, ty) = &mut input.sig.output {
-        if let Type::Path(tp) = ty.as_mut() {
-            if let Some(seg) = tp.path.segments.last_mut() {
-                if let PathArguments::AngleBracketed(args) = &mut seg.arguments {
-                    if let Some(arg) = args.args.iter_mut().nth(1) {
-                        *arg = parse_quote!(#struct_ident);
+            // Update Signature with the new Error Struct
+            if let ReturnType::Type(_, ty) = &mut input.sig.output {
+                if let Type::Path(tp) = ty.as_mut() {
+                    if let Some(seg) = tp.path.segments.last_mut() {
+                        if let PathArguments::AngleBracketed(args) = &mut seg.arguments {
+                            if let Some(arg) = args.args.iter_mut().nth(1) {
+                                *arg = parse_quote!(#struct_ident);
+                            }
+                        }
                     }
                 }
             }
-        }
-    }
 
-    // Reconstruct Output
-    let expanded = quote! {
-        skerry::skerry_internals::create_fn_error!(
-            #struct_ident,
-            #fn_name,
-            [#(#normal_errors),*],
-            [#(#passthrough_errors),*]
-        );
+            // Reconstruct Output
+            quote! {
+                skerry::skerry_internals::create_fn_error!(
+                    #struct_ident,
+                    #fn_name,
+                    [#(#normal_errors),*],
+                    [#(#passthrough_errors),*]
+                );
+            }
+        }
+        Ok(None) => quote! {},
+        Err(e) => return Err(TokenStream::from(e.to_compile_error())),
     };
 
     let attrs = input.attrs;
@@ -202,12 +202,15 @@ fn format_error_struct_name(base: &str) -> syn::Ident {
     format_ident!("{}", name)
 }
 
-fn extract_errors_from_tokens(tokens: TokenStream2) -> syn::Result<(Vec<Ident>, Vec<Ident>)> {
+fn extract_errors_from_tokens(
+    tokens: TokenStream2,
+) -> syn::Result<Option<(Vec<Ident>, Vec<Ident>)>> {
     let mut iter = tokens.into_iter().peekable();
 
     // Look for 'e'
-    match iter.next() {
+    match iter.peek() {
         Some(TokenTree::Ident(ident)) if ident == "e" => {
+            iter.next();
             // Look for '!'
             match iter.next() {
                 Some(TokenTree::Punct(p)) if p.as_char() == '!' => {
@@ -216,27 +219,15 @@ fn extract_errors_from_tokens(tokens: TokenStream2) -> syn::Result<(Vec<Ident>, 
                             return Err(syn::Error::new(g.span(), "e! only accepts brackets []."));
                         }
                         let mut inner_stream = g.stream().into_iter().peekable();
-                        process_inner_errors(&mut inner_stream)
+                        process_inner_errors(&mut inner_stream).map(|e| Some(e))
                     } else {
                         Err(syn::Error::new(p.span(), "e! only accepts brackets []."))
                     }
                 }
-                _ => {
-                    // Prevent error type generation as there was no e![]
-                    Err(syn::Error::new(
-                        Span::call_site(),
-                        "Support for non expand types not implemented",
-                    ))
-                }
+                _ => Ok(None),
             }
         }
-        Some(_token) => {
-            // Prevent error type generation as there was no e![]
-            Err(syn::Error::new(
-                Span::call_site(),
-                "Support for non expand types not implemented 2",
-            ))
-        }
+        Some(_) => Ok(None),
         None => Err(syn::Error::new(Span::call_site(), "Unexpected EOF")),
     }
 }

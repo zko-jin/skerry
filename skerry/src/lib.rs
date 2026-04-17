@@ -186,11 +186,8 @@
 //! ## Using Skerry inside Impl Blocks
 //!
 //! Skerry provides the `#[skerry_impl]` attribute to handle methods within `impl` blocks.
-//! This attribute coordinates with `#[skerry_fn]` to split the generated code:
-//!
-//! 1.  **Top-Level**: The error enums are generated outside the `impl` block.
-//! 2.  **Method-Level**: The method signature is updated, and all `?` operators are
-//!     automatically transformed to wrap errors into `GlobalErrors`.
+//! This attribute coordinates with `#[skerry_fn]` to split the generated code
+//! so error enums are generated outside the `impl` block.
 //!
 //! ### Example
 //!
