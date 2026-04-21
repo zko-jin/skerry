@@ -292,22 +292,6 @@
 //! | `try_trait_v2` | Allows using `?` with custom `Result` types; removes the strict requirement for `#[skerry_fn]` on standard functions. |
 //! | `custom_inner_attributes`/`proc_macro_hygiene` | Enables the use of `#![skerry]` at the top of a file to annotate all contents automatically. |
 //!
-//! ## Error Declaration
-//!
-//! Use `#![skerry_mod]` to define concise error sets. The `#[from]` attribute allows
-//! automatic wrapping of external library errors.
-//!
-//! ```rust
-//! //! errors.rs
-//! #![skerry_mod]
-//!
-//! pub struct ErrA;
-//! pub struct ErrB;
-//!
-//! #[from]
-//! pub struct Outer(OuterErrorFromLib);
-//! ```
-//!
 //! ## Comparison
 //!
 //! ### Standard Manual Approach
@@ -393,9 +377,7 @@
 mod helpers;
 mod macros;
 mod traits;
-#[cfg(feature = "custom_result")]
-pub use skerry_macros::skerry;
-pub use skerry_macros::{define_error, skerry_fn, skerry_impl, skerry_mod, skerry_trait};
+pub use skerry_macros::{define_error, skerry, skerry_fn, skerry_impl, skerry_mod, skerry_trait};
 
 pub mod skerry_internals {
     pub use crate::{helpers::*, macros::*, traits::*};

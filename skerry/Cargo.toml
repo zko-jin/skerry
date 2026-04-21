@@ -1,6 +1,6 @@
 [package]
 name = "skerry"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 authors = ["Zkojin <zkojin@proton.me>"]
 description = "Super Kool ERRors Yoh - A type-safe, zero-boilerplate error management framework."
@@ -16,5 +16,5 @@ skerry_macros = { version = "0.1.4", path = "../skerry_macros" }
 paste = "1.0.15"
 
 [features]
-default = ["custom_result"]
+default = []
 custom_result = ["skerry_macros/custom_result"]

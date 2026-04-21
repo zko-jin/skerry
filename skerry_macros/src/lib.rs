@@ -366,7 +366,6 @@ impl VisitMut for SkerryVisitor {
     }
 }
 
-#[cfg(feature = "custom_result")]
 #[proc_macro_attribute]
 pub fn skerry(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input = parse_macro_input!(item as syn::ItemMod);

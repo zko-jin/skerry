@@ -2,12 +2,12 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{ItemTrait, TraitItem, TraitItemFn, parse_macro_input};
 
-use crate::internal::skerry_impl::ImplAttribute;
+use crate::internal::skerry_impl::ImplTraitAttribute;
 
 pub fn skerry_trait(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input_trait = parse_macro_input!(item as ItemTrait);
     let mut top_level_code = quote! {};
-    let attr_args = syn::parse_macro_input!(attr as ImplAttribute);
+    let attr_args = syn::parse_macro_input!(attr as ImplTraitAttribute);
 
     for item in &mut input_trait.items {
         if let TraitItem::Fn(method) = item {
@@ -20,10 +20,15 @@ pub fn skerry_trait(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                 let method_tokens = quote!(#method).into();
 
+                let prefix = match &attr_args.prefix {
+                    Some(p) => Some(p),
+                    None => Some(&input_trait.ident),
+                };
+
                 match crate::internal::skerry_fn::skerry_fn_trait(
                     TokenStream::new(),
                     method_tokens,
-                    attr_args.prefix.as_ref(),
+                    prefix,
                 ) {
                     Ok((top_stream, method_stream)) => {
                         top_level_code.extend(top_stream);
