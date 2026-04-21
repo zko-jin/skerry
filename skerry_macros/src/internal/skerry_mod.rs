@@ -44,6 +44,7 @@ pub fn skerry_mod(_attr: TokenStream, item: TokenStream) -> TokenStream {
         out_items.push(item);
     }
 
+    #[allow(unused)]
     let mut feature_expand = quote! {};
 
     #[cfg(feature = "custom_result")]
