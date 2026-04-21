@@ -27,7 +27,10 @@
       {
         devShells.default = mkShell {
           buildInputs = [
-            (rust-bin.beta.latest.default)
+            (rust-bin.selectLatestNightlyWith (toolchain: toolchain.default))
+          ];
+          nativeBuildInputs = [
+            rust-analyzer
           ];
         };
       }
