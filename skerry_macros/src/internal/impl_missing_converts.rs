@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use cfg_if::cfg_if;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
@@ -100,8 +101,10 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
         }
     };
 
-    let from_impl = if expand {
-        quote! {
+    let mut expanded = quote! {};
+
+    if expand {
+        expanded.extend(quote! {
             impl<E: skerry::skerry_internals::SkerryError #( + skerry::skerry_internals::MissingConvert<#filtered>)*>
                 From<GlobalErrors<E>> for #ty
             {
@@ -112,18 +115,14 @@ pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
                     }
                 }
             }
-        }
-    } else {
-        quote! {}
-    };
+        });
+    }
 
-    let expanded = quote! {
-        #(
-            impl skerry::skerry_internals::MissingConvert<#filtered> for #ty {}
-        )*
-
-        #from_impl
-    };
+    expanded.extend(quote! {
+         #(
+             impl skerry::skerry_internals::MissingConvert<#filtered> for #ty {}
+         )*
+    });
 
     TokenStream::from(expanded)
 }

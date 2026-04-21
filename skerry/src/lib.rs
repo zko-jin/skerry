@@ -270,6 +270,12 @@
 //! Skerry uses a custom trait system (`MissingConvert`) to verify error bounds at
 //! compile-time. If you try to use `?` on a function whose errors are not represented
 //! in your current return tuple, the compiler will refuse to build.
+#![cfg_attr(
+    feature = "custom_result",
+    feature(try_trait_v2),
+    feature(const_convert),
+    feature(const_trait_impl)
+)]
 
 mod helpers;
 mod macros;
@@ -297,11 +303,13 @@ mod test {
         pub struct ErrE;
         pub struct ErrF;
         pub struct Outer(OuterErrorFromLib);
+    }
 
-        impl From<OuterErrorFromLib> for Outer {
-            fn from(val: OuterErrorFromLib) -> Self {
-                Self(val)
-            }
+    impl IntoSkerryGlobal for OuterErrorFromLib {
+        type Error = Outer;
+
+        fn into_global_error(self) -> GlobalErrors<Self::Error> {
+            GlobalErrors::Outer(Outer(self))
         }
     }
 
@@ -312,7 +320,8 @@ mod test {
 
     #[skerry_fn]
     fn my_fn2() -> Result<(), e![ErrE, ErrF, Outer]> {
-        let r: Result<(), OuterErrorFromLib> = Err(OuterErrorFromLib);
+        let r: std::result::Result<(), OuterErrorFromLib> =
+            std::result::Result::Err(OuterErrorFromLib);
         let _ = r?;
 
         Ok(())
@@ -355,14 +364,12 @@ mod test {
         }
     }
 
-    #[skerry_impl]
     impl TestTrait for MyStruct {
         fn test() -> Result<(), TestTraitTestError> {
             Ok(())
         }
     }
 
-    #[skerry_fn]
     fn no_expand_func() -> Result<(), MyFn3Error> {
         let r: Result<(), MyFn2Error> = Err(MyFn2Error::ErrE(ErrE));
         Ok(r?)

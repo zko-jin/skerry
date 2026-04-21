@@ -1,3 +1,4 @@
+use cfg_if::cfg_if;
 use proc_macro::TokenStream;
 use proc_macro2::{Delimiter, Span, TokenStream as TokenStream2, TokenTree};
 use quote::{ToTokens, format_ident, quote, quote_spanned};
@@ -7,8 +8,10 @@ use syn::{
     visit_mut::{self, VisitMut},
 };
 
+#[cfg(not(feature = "custom_result"))]
 pub struct QuestionMarkTransformer;
 
+#[cfg(not(feature = "custom_result"))]
 impl VisitMut for QuestionMarkTransformer {
     fn visit_expr_mut(&mut self, node: &mut Expr) {
         visit_mut::visit_expr_mut(self, node);
@@ -32,8 +35,11 @@ struct SkerryFnInput {
 
 impl SkerryFnInput {
     fn from_fn(mut item: ItemFn) -> Self {
-        let mut transformer = QuestionMarkTransformer;
-        transformer.visit_item_fn_mut(&mut item);
+        #[cfg(not(feature = "custom_result"))]
+        {
+            let mut transformer = QuestionMarkTransformer;
+            transformer.visit_item_fn_mut(&mut item);
+        }
         Self {
             sig: item.sig,
             block: Some(*item.block),
@@ -43,8 +49,11 @@ impl SkerryFnInput {
     }
 
     fn from_trait_fn(mut item: TraitItemFn) -> Self {
-        let mut transformer = QuestionMarkTransformer;
-        transformer.visit_trait_item_fn_mut(&mut item);
+        #[cfg(not(feature = "custom_result"))]
+        {
+            let mut transformer = QuestionMarkTransformer;
+            transformer.visit_trait_item_fn_mut(&mut item);
+        }
         Self {
             sig: item.sig,
             block: item.default,

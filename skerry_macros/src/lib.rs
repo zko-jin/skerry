@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use cfg_if::cfg_if;
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
@@ -205,6 +206,23 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
 
     let macro_ident = format_ident!("{}_errors", format_snake_case(&ty.to_string()));
 
+    cfg_if! {
+        if #[cfg(feature = "custom_result")] {
+            let features =
+                quote! {
+                    impl IntoSkerryGlobal for #ty {
+                        type Error = #ty;
+
+                        fn into_global_error(self) -> GlobalErrors<Self::Error> {
+                            self.into()
+                        }
+                    }
+                };
+        } else {
+            let features = quote! {};
+        }
+    }
+
     let expanded = quote! {
         #[macro_export]
         macro_rules! #macro_ident {
@@ -228,6 +246,8 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
                 #variants(#deduped),
             )*
         }
+
+        #features
 
         skerry_impl_missing_errors!(#ty, [#(#variants),*]);
 
