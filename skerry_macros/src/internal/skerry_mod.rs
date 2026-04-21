@@ -1,7 +1,7 @@
 use cfg_if::cfg_if;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Item, ItemMod, parse_macro_input};
+use syn::{Fields, Item, ItemMod, parse_macro_input};
 
 pub fn skerry_mod(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_mod = parse_macro_input!(item as ItemMod);
@@ -12,9 +12,33 @@ pub fn skerry_mod(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut struct_names = Vec::new();
     let mut out_items = Vec::new();
+    let mut from_macros = Vec::new();
 
-    for item in items {
-        if let Item::Struct(s) = &item {
+    for mut item in items {
+        if let Item::Struct(s) = &mut item {
+            let from_idx = s.attrs.iter().position(|attr| attr.path().is_ident("from"));
+
+            if let Some(index) = from_idx {
+                s.attrs.remove(index);
+
+                if let Fields::Unnamed(fields) = &s.fields {
+                    if fields.unnamed.len() == 1 {
+                        let first_field = fields.unnamed.first().unwrap();
+                        from_macros.push((s.ident.clone(), first_field.ty.clone()));
+                    } else {
+                        return syn::Error::new_spanned(
+                            &s.fields,
+                            "#[from] structs must have exactly one field",
+                        )
+                        .to_compile_error()
+                        .into();
+                    }
+                } else {
+                    return syn::Error::new_spanned(s, "#[from] can only be used on tuple structs")
+                        .to_compile_error()
+                        .into();
+                }
+            }
             struct_names.push(s.ident.clone());
         }
         out_items.push(item);
@@ -89,10 +113,37 @@ pub fn skerry_mod(_attr: TokenStream, item: TokenStream) -> TokenStream {
         });
     }
 
+    let from_impls = from_macros.iter().map(|(struct_name, inner_type)| {
+        cfg_if! {
+            if #[cfg(feature = "custom_result")] {
+                quote! {
+                    impl IntoSkerryGlobal for #inner_type {
+                        type Error = #struct_name;
+
+                        fn into_global_error(self) -> GlobalErrors<Self::Error> {
+                            GlobalErrors::#struct_name(#struct_name(self))
+                        }
+                    }
+                }
+            }
+            else {
+                quote! {
+                    impl From<#inner_type> for #struct_name {
+                        fn from(val: #inner_type) -> #struct_name {
+                            Self(val)
+                        }
+                    }
+                }
+            }
+        }
+    });
+
     let expanded = quote! {
         #(#out_items)*
 
         #feature_expand
+
+        #(#from_impls)*
 
         pub enum GlobalErrors<E: skerry::skerry_internals::SkerryError> {
             #(

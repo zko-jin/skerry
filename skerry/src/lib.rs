@@ -14,12 +14,8 @@
 //!
 //!     pub struct InvalidParse;
 //!
+//!     #[from]
 //!     pub struct LibError(ErrorFromLib);
-//!     impl From<ErrorFromLib> for LibError {
-//!         fn from(val: ErrorFromLib) -> Self {
-//!             Self(val)
-//!         }
-//!     }
 //! }
 //!
 //! // Generates a CheckAuthError enum automatically
@@ -83,6 +79,7 @@
 //! ```rust
 //! // Recommended to be pub for easier macro expansions
 //! pub use skerry::*;
+//! # struct LibError;
 //!
 //! #[skerry_mod]
 //! mod errors {
@@ -90,8 +87,14 @@
 //!     pub struct ErrB;
 //!     pub struct ErrC;
 //!     pub struct DatabaseErr;
+//!     #[from]
+//!     pub struct OuterLibError(LibError);
 //! }
 //! ```
+//!
+//! You can also anotate with `#[from]` to automatically add conversions from the inner type.
+//! This is only valid for tuple structs with a single element.
+//!
 //! *Note: When using errors in any other file, import them via `crate::errors::*;` instead
 //! of individual imports to ensure the macros can resolve the paths correctly.*
 //!
@@ -302,15 +305,9 @@ mod test {
         pub struct ErrD;
         pub struct ErrE;
         pub struct ErrF;
+
+        #[from]
         pub struct Outer(OuterErrorFromLib);
-    }
-
-    impl IntoSkerryGlobal for OuterErrorFromLib {
-        type Error = Outer;
-
-        fn into_global_error(self) -> GlobalErrors<Self::Error> {
-            GlobalErrors::Outer(Outer(self))
-        }
     }
 
     #[skerry_fn]
