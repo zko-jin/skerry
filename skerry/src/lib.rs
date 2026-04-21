@@ -275,14 +275,17 @@
 //! in your current return tuple, the compiler will refuse to build.
 #![cfg_attr(
     feature = "custom_result",
+    allow(unused_features),
     feature(try_trait_v2),
-    feature(const_convert),
-    feature(const_trait_impl)
+    feature(custom_inner_attributes),
+    feature(proc_macro_hygiene)
 )]
 
 mod helpers;
 mod macros;
 mod traits;
+#[cfg(feature = "custom_result")]
+pub use skerry_macros::skerry;
 pub use skerry_macros::{define_error, skerry_fn, skerry_impl, skerry_mod, skerry_trait};
 
 pub mod skerry_internals {
@@ -291,93 +294,4 @@ pub mod skerry_internals {
 }
 
 #[cfg(test)]
-mod test {
-    extern crate self as skerry;
-    pub use skerry::*;
-
-    pub struct OuterErrorFromLib;
-
-    #[skerry_mod]
-    pub mod errors {
-        pub struct ErrA;
-        pub struct ErrB;
-        pub struct ErrC;
-        pub struct ErrD;
-        pub struct ErrE;
-        pub struct ErrF;
-
-        #[from]
-        pub struct Outer(OuterErrorFromLib);
-    }
-
-    #[skerry_fn]
-    fn my_fn1() -> Result<(), e![ErrA, ErrB, ErrC]> {
-        Err(MyFn1Error::ErrA(ErrA))
-    }
-
-    #[skerry_fn]
-    fn my_fn2() -> Result<(), e![ErrE, ErrF, Outer]> {
-        let r: std::result::Result<(), OuterErrorFromLib> =
-            std::result::Result::Err(OuterErrorFromLib);
-        let _ = r?;
-
-        Ok(())
-    }
-
-    #[skerry_fn]
-    pub fn my_fn3() -> Result<(), e![ErrA, ErrB, ErrC, *MyFn2Error]> {
-        my_fn2()?;
-        my_fn1()?;
-        Ok(())
-    }
-
-    define_error!(DefineTest, [ErrA]);
-
-    pub struct MyStruct;
-
-    #[skerry_impl(prefix(MyStruct))]
-    impl MyStruct {
-        #[skerry_fn]
-        pub fn struct_fn() -> Result<(), e![*DefineTest, *MyFn3Error]> {
-            my_fn3()?;
-            Ok(())
-        }
-
-        #[skerry_fn]
-        pub fn struct_fn_2() -> Result<(), e![*MyStructStructFnError]> {
-            Self::struct_fn()?;
-            Ok(())
-        }
-    }
-
-    #[skerry_trait(prefix(TestTrait))]
-    trait TestTrait {
-        #[skerry_fn]
-        fn test() -> Result<(), e![ErrA, ErrB, *MyFn3Error]>;
-
-        #[skerry_fn]
-        fn test_2() -> Result<(), e![ErrA, ErrB, *MyFn3Error]> {
-            Ok(())
-        }
-    }
-
-    impl TestTrait for MyStruct {
-        fn test() -> Result<(), TestTraitTestError> {
-            Ok(())
-        }
-    }
-
-    fn no_expand_func() -> Result<(), MyFn3Error> {
-        let r: Result<(), MyFn2Error> = Err(MyFn2Error::ErrE(ErrE));
-        Ok(r?)
-    }
-
-    #[test]
-    pub fn test() {
-        let _ = my_fn3();
-        let _ = MyStruct::test();
-        let _ = MyStruct::test_2();
-        let _ = MyStruct::struct_fn_2();
-        let _ = no_expand_func();
-    }
-}
+mod test;

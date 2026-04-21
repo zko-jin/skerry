@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 
-use cfg_if::cfg_if;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{

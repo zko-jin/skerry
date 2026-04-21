@@ -4,10 +4,12 @@ use cfg_if::cfg_if;
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    Ident, Path, Token,
+    Attribute, Ident, ImplItemFn, ItemFn, ItemImpl, ItemTrait, Path, ReturnType, Token,
+    TraitItemFn, Type,
     parse::{Parse, ParseStream},
-    parse_macro_input,
+    parse_macro_input, parse_quote,
     punctuated::Punctuated,
+    visit_mut::{self, VisitMut},
 };
 
 use crate::internal::skerry_fn::{format_snake_case, process_inner_errors, quote_error_gen};
@@ -301,4 +303,76 @@ pub fn define_error(input: TokenStream) -> TokenStream {
     };
 
     quote_error_gen(type_ident, errors).into()
+}
+
+struct SkerryVisitor;
+
+impl SkerryVisitor {
+    fn is_skerry_result(rt: &ReturnType) -> bool {
+        if let ReturnType::Type(_, ty) = rt {
+            if let Type::Path(tp) = ty.as_ref() {
+                let last_segment = tp.path.segments.last().unwrap();
+                if last_segment.ident == "Result" {
+                    if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
+                        if let Some(syn::GenericArgument::Type(Type::Macro(m))) = args.args.last() {
+                            return m.mac.path.is_ident("e");
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn add_attr(attrs: &mut Vec<Attribute>, name: &str) {
+        let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
+        attrs.push(parse_quote!(#[#ident]));
+    }
+}
+
+impl VisitMut for SkerryVisitor {
+    fn visit_item_fn_mut(&mut self, i: &mut ItemFn) {
+        if Self::is_skerry_result(&i.sig.output) {
+            Self::add_attr(&mut i.attrs, "skerry_fn");
+        }
+        visit_mut::visit_item_fn_mut(self, i);
+    }
+
+    fn visit_item_impl_mut(&mut self, i: &mut ItemImpl) {
+        Self::add_attr(&mut i.attrs, "skerry_impl");
+        visit_mut::visit_item_impl_mut(self, i);
+    }
+
+    // Handle functions inside impl blocks
+    fn visit_impl_item_fn_mut(&mut self, i: &mut ImplItemFn) {
+        if Self::is_skerry_result(&i.sig.output) {
+            Self::add_attr(&mut i.attrs, "skerry_fn");
+        }
+        visit_mut::visit_impl_item_fn_mut(self, i);
+    }
+
+    // Handle trait definitions
+    fn visit_item_trait_mut(&mut self, i: &mut ItemTrait) {
+        Self::add_attr(&mut i.attrs, "skerry_trait");
+        visit_mut::visit_item_trait_mut(self, i);
+    }
+
+    // Handle functions inside traits
+    fn visit_trait_item_fn_mut(&mut self, i: &mut TraitItemFn) {
+        if Self::is_skerry_result(&i.sig.output) {
+            Self::add_attr(&mut i.attrs, "skerry_fn");
+        }
+        visit_mut::visit_trait_item_fn_mut(self, i);
+    }
+}
+
+#[cfg(feature = "custom_result")]
+#[proc_macro_attribute]
+pub fn skerry(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let mut input = parse_macro_input!(item as syn::ItemMod);
+    let mut visitor = SkerryVisitor;
+
+    visitor.visit_item_mod_mut(&mut input);
+
+    quote!(#input).into()
 }
