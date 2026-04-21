@@ -36,12 +36,10 @@ struct SkerryFnInput {
 }
 
 impl SkerryFnInput {
+    #[cfg(not(feature = "custom_result"))]
     fn from_fn(mut item: ItemFn) -> Self {
-        #[cfg(not(feature = "custom_result"))]
-        {
-            let mut transformer = QuestionMarkTransformer;
-            transformer.visit_item_fn_mut(&mut item);
-        }
+        let mut transformer = QuestionMarkTransformer;
+        transformer.visit_item_fn_mut(&mut item);
         Self {
             sig: item.sig,
             block: Some(*item.block),
@@ -50,12 +48,30 @@ impl SkerryFnInput {
         }
     }
 
-    fn from_trait_fn(mut item: TraitItemFn) -> Self {
-        #[cfg(not(feature = "custom_result"))]
-        {
-            let mut transformer = QuestionMarkTransformer;
-            transformer.visit_trait_item_fn_mut(&mut item);
+    #[cfg(feature = "custom_result")]
+    fn from_fn(item: ItemFn) -> Self {
+        Self {
+            sig: item.sig,
+            block: Some(*item.block),
+            attrs: item.attrs,
+            vis: item.vis,
         }
+    }
+
+    #[cfg(not(feature = "custom_result"))]
+    fn from_trait_fn(mut item: TraitItemFn) -> Self {
+        let mut transformer = QuestionMarkTransformer;
+        transformer.visit_trait_item_fn_mut(&mut item);
+        Self {
+            sig: item.sig,
+            block: item.default,
+            attrs: item.attrs,
+            vis: syn::Visibility::Inherited,
+        }
+    }
+
+    #[cfg(feature = "custom_result")]
+    fn from_trait_fn(item: TraitItemFn) -> Self {
         Self {
             sig: item.sig,
             block: item.default,

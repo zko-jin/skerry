@@ -13,12 +13,8 @@ pub mod errors {
 
     pub struct InvalidParse;
 
+    #[from]
     pub struct LibError(ErrorFromLib);
-    impl From<ErrorFromLib> for LibError {
-        fn from(val: ErrorFromLib) -> Self {
-            Self(val)
-        }
-    }
 }
 
 // Generates a CheckAuthError enum automatically
@@ -86,8 +82,14 @@ mod errors {
     pub struct ErrB;
     pub struct ErrC;
     pub struct DatabaseErr;
+    #[from]
+    pub struct OuterLibError(LibError);
 }
 ```
+
+You can also anotate with `#[from]` to automatically add conversions from the inner type.
+This is only valid for tuple structs with a single element.
+
 *Note: When using errors in any other file, import them via `crate::errors::*;` instead
 of individual imports to ensure the macros can resolve the paths correctly.*
 
@@ -199,6 +201,115 @@ define_error!(ManualDefine, [ErrorA, ErrorB]);
 #[skerry_fn]
 fn my_func_with_custom_error() -> Result<(), ManualDefine> {
     Ok(())
+}
+```
+## Custom Result Feature
+
+The `custom_result` feature implements a specialized result type and leverages the
+unstable features to enable even more automation.
+
+### Nightly Features Required
+
+To use the full suite of automation provided by this feature, you must enable the
+following nightly features in your crate root:
+
+```rust
+#![feature(try_trait_v2)]
+#![feature(custom_inner_attributes)]
+#![feature(proc_macro_hygiene)]
+```
+
+### Overview
+
+Enabling `custom_result` changes the behavior of the `?` operator to support
+automatic conversion into `GlobalErrors<I>`.
+
+| Feature Gate | Effect |
+|--------------|--------|
+| `try_trait_v2` | Allows using `?` with custom `Result` types; removes the strict requirement for `#[skerry_fn]` on standard functions. |
+| `custom_inner_attributes`/`proc_macro_hygiene` | Enables the use of `#![skerry]` at the top of a file to annotate all contents automatically. |
+
+### Error Declaration
+
+Use `#![skerry_mod]` to define concise error sets. The `#[from]` attribute allows
+automatic wrapping of external library errors.
+
+```rust
+//! errors.rs
+#![skerry_mod]
+
+pub struct ErrA;
+pub struct ErrB;
+
+#[from]
+pub struct Outer(OuterErrorFromLib);
+```
+
+### Comparison
+
+#### Standard Manual Approach
+Traditionally, every function and implementation block requires explicit tagging:
+
+```rust
+#[skerry_fn]
+fn check_auth() -> Result<(), e![AuthError]> {
+    Err(CheckAuthError::AuthError(AuthError))
+}
+
+struct Controller;
+
+#[skerry_impl(prefix(Controller))]
+impl Controller {
+    #[skerry_fn]
+    pub fn run() -> Result<(), e![LibError, *CheckAuthError]> {
+        check_auth()?;
+        lib_fn_that_returns_error()?;
+        Ok(())
+    }
+}
+#[skerry_trait(prefix(ToJson))]
+trait ToJson {
+    #[skerry_fn]
+    fn to_json(&self) -> Result<(), e![InvalidParse]>;
+}
+
+impl ToJson for Controller {
+    #[skerry_fn]
+    fn to_json(&self) -> Result<(), ToJsonError> {
+        Ok(())
+    }
+}
+```
+
+#### Automated Approach with `custom_result`
+By adding `#![skerry]` to the top of your module, the boilerplate is handled
+automatically.
+
+```rust
+#![skerry]
+
+fn check_auth() -> Result<(), e![AuthError]> {
+    Err(CheckAuthError::AuthError(AuthError))
+}
+
+struct Controller;
+
+impl Controller {
+    pub fn run() -> Result<(), e![LibError, *CheckAuthError]> {
+        check_auth()?;
+        lib_fn_that_returns_error()?;
+        Ok(())
+    }
+}
+
+trait ToJson {
+    fn to_json(&self) -> Result<(), e![InvalidParse]>;
+}
+
+impl ToJson for Controller {
+    fn to_json(&self) -> Result<(), ToJsonError> {
+        Ok(())
+    }
 }
 ```
 ---
