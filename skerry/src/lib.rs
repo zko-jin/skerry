@@ -379,6 +379,16 @@ mod macros;
 mod traits;
 pub use skerry_macros::{define_error, skerry, skerry_fn, skerry_impl, skerry_mod, skerry_trait};
 
+#[macro_export]
+macro_rules! include_skerry {
+    () => {};
+}
+
+#[macro_export]
+macro_rules! build_skerry {
+    () => {};
+}
+
 pub mod skerry_internals {
     pub use crate::{helpers::*, macros::*, traits::*};
     pub use skerry_macros::*;
