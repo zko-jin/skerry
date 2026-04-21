@@ -1,6 +1,6 @@
 [package]
 name = "skerry"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 authors = ["Zkojin <zkojin@proton.me>"]
 description = "Super Kool ERRors Yoh - A type-safe, zero-boilerplate error management framework."
@@ -12,7 +12,7 @@ categories = ["rust-patterns", "development-tools"]
 license = "MIT"
 
 [dependencies]
-skerry_macros = { version = "0.1.3", path = "../skerry_macros" }
+skerry_macros = { version = "0.1.4", path = "../skerry_macros" }
 paste = "1.0.15"
 
 [features]
