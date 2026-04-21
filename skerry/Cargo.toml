@@ -12,7 +12,7 @@ categories = ["rust-patterns", "development-tools"]
 license = "MIT"
 
 [dependencies]
-skerry_macros = { version = "0.1.4", path = "../skerry_macros" }
+skerry_macros = { version = "0.1.5", path = "../skerry_macros" }
 paste = "1.0.15"
 
 [features]
