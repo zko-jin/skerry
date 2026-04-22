@@ -377,21 +377,43 @@
 mod helpers;
 mod macros;
 mod traits;
-pub use skerry_macros::{define_error, skerry, skerry_fn, skerry_impl, skerry_mod, skerry_trait};
+pub use skerry_macros::{
+    define_error,
+    skerry,
+    skerry_fn,
+    skerry_impl,
+    skerry_mod,
+    skerry_trait,
+};
 
+#[cfg(feature = "code-gen")]
 #[macro_export]
-macro_rules! include_skerry {
-    () => {};
+macro_rules! include {
+    () => {
+        include!(concat!(env!("OUT_DIR"), "/skerry_gen.rs"));
+    };
 }
 
+#[cfg(feature = "code-gen")]
 #[macro_export]
 macro_rules! build_skerry {
     () => {};
 }
 
+#[cfg(feature = "code-gen")]
+pub use skerry_macros::{
+    e,
+    skerry_error,
+};
+
 pub mod skerry_internals {
-    pub use crate::{helpers::*, macros::*, traits::*};
     pub use skerry_macros::*;
+
+    pub use crate::{
+        helpers::*,
+        macros::*,
+        traits::*,
+    };
 }
 
 #[cfg(test)]

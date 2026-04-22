@@ -1,7 +1,12 @@
 use cfg_if::cfg_if;
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Fields, Item, ItemMod, parse_macro_input};
+use syn::{
+    Fields,
+    Item,
+    ItemMod,
+    parse_macro_input,
+};
 
 pub fn skerry_mod(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_mod = parse_macro_input!(item as ItemMod);

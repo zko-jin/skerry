@@ -12,9 +12,10 @@ categories = ["rust-patterns", "development-tools"]
 license = "MIT"
 
 [dependencies]
-skerry_macros = { version = "0.1.5", path = "../skerry_macros" }
+skerry-macros = { workspace = true }
 paste = "1.0.15"
 
 [features]
 default = []
-custom_result = ["skerry_macros/custom_result"]
+custom_result = ["skerry-macros/custom_result"]
+code-gen = ["skerry-macros/code-gen"]

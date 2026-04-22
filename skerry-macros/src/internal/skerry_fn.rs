@@ -1,13 +1,34 @@
 use proc_macro::TokenStream;
-use proc_macro2::{Delimiter, Span, TokenStream as TokenStream2, TokenTree};
-use quote::{ToTokens, format_ident, quote, quote_spanned};
+use proc_macro2::{
+    Delimiter,
+    Span,
+    TokenStream as TokenStream2,
+    TokenTree,
+};
+use quote::{
+    ToTokens,
+    format_ident,
+    quote,
+    quote_spanned,
+};
 #[cfg(not(feature = "custom_result"))]
 use syn::{
-    Expr, ExprTry,
-    visit_mut::{self, VisitMut},
+    Expr,
+    ExprTry,
+    visit_mut::{
+        self,
+        VisitMut,
+    },
 };
 use syn::{
-    GenericArgument, Ident, ItemFn, PathArguments, ReturnType, TraitItemFn, Type, parse_quote,
+    GenericArgument,
+    Ident,
+    ItemFn,
+    PathArguments,
+    ReturnType,
+    TraitItemFn,
+    Type,
+    parse_quote,
 };
 
 #[cfg(not(feature = "custom_result"))]

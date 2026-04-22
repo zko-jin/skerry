@@ -2,17 +2,40 @@ use std::collections::HashSet;
 
 use cfg_if::cfg_if;
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::{
+    format_ident,
+    quote,
+};
 use syn::{
-    Attribute, Ident, ImplItemFn, ItemFn, ItemImpl, ItemTrait, Path, ReturnType, Token,
-    TraitItemFn, Type,
-    parse::{Parse, ParseStream},
-    parse_macro_input, parse_quote,
+    Attribute,
+    Ident,
+    ImplItemFn,
+    ItemFn,
+    ItemImpl,
+    ItemTrait,
+    Path,
+    ReturnType,
+    Token,
+    TraitItemFn,
+    Type,
+    parse::{
+        Parse,
+        ParseStream,
+    },
+    parse_macro_input,
+    parse_quote,
     punctuated::Punctuated,
-    visit_mut::{self, VisitMut},
+    visit_mut::{
+        self,
+        VisitMut,
+    },
 };
 
-use crate::internal::skerry_fn::{format_snake_case, process_inner_errors, quote_error_gen};
+use crate::internal::skerry_fn::{
+    format_snake_case,
+    process_inner_errors,
+    quote_error_gen,
+};
 
 mod internal {
     pub mod impl_missing_converts;
@@ -20,6 +43,39 @@ mod internal {
     pub mod skerry_impl;
     pub mod skerry_mod;
     pub mod skerry_trait;
+}
+
+#[cfg(feature = "code-gen")]
+mod code_gen;
+
+#[cfg(feature = "code-gen")]
+#[proc_macro]
+pub fn e(input: TokenStream) -> TokenStream {
+    code_gen::e(input)
+}
+
+#[cfg(feature = "code-gen")]
+#[proc_macro_attribute]
+pub fn skerry_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    use proc_macro2::TokenStream;
+
+    let item: TokenStream = item.into();
+
+    let span = proc_macro::Span::call_site();
+    let line = span.start().line();
+    let line_lit = proc_macro2::Literal::usize_unsuffixed(line);
+    let file = span.file();
+    let short_path = if let Some(idx) = file.find("src/") {
+        &file[idx..]
+    } else {
+        &file
+    };
+
+    quote! {
+        skerry_invoke!{ #short_path, #line_lit }
+        #item
+    }
+    .into()
 }
 
 #[proc_macro]
