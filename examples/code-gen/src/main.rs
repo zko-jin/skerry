@@ -19,7 +19,6 @@ pub struct ErrB;
 fn test() -> Result<(), e![ErrA, ErrB]> {
     Ok(())
 }
-
 fn test_2() -> Result<(), e![ErrA, *TestError]> {
     Ok(())
 }

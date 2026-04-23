@@ -19,6 +19,14 @@ use syn::{
         Visit,
     },
 };
+use topological_sort::TopologicalSort;
+
+pub struct CompositeError {
+    types: Vec<String>,
+    composites: Vec<String>,
+    file: String,
+    line: usize,
+}
 
 pub enum ErrorDefinition {
     Simple {
@@ -26,12 +34,7 @@ pub enum ErrorDefinition {
         file: String,
         line: usize,
     },
-    Composite {
-        types: Vec<String>,
-        composites: Vec<String>,
-        file: String,
-        line: usize,
-    },
+    Composite(CompositeError),
 }
 
 enum DefFailCause {
@@ -132,12 +135,12 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
                     .type_definitions
                     .try_insert(
                         composite_name.clone(),
-                        ErrorDefinition::Composite {
+                        ErrorDefinition::Composite(CompositeError {
                             types,
                             composites,
                             file: self.file_path.to_string(),
                             line: ty.span().start().line,
-                        },
+                        }),
                     )
                     .is_err()
                 {
@@ -237,7 +240,7 @@ fn main() {
 
     let mut all_defs = Vec::new();
     let mut all_arms = Vec::new();
-
+    let mut ts = TopologicalSort::<String>::new();
     let mut plain_defs = String::new();
 
     // Validate and generate errors
@@ -251,17 +254,17 @@ fn main() {
 
                 plain_defs.push_str(&raw);
             }
-            ErrorDefinition::Composite {
+            ErrorDefinition::Composite(CompositeError {
                 types,
                 composites,
                 file,
                 line,
-            } => {
+            }) => {
                 let mut missing_errors = vec![];
                 let mut remove_asterisk = vec![];
                 let mut add_asterisk = vec![];
 
-                // Checking for missing plain types
+                // Checking for errors
                 for plain_type in types {
                     if let Some(t) = type_definitions.get(plain_type) {
                         if let ErrorDefinition::Composite { .. } = t {
@@ -297,21 +300,46 @@ fn main() {
                     continue;
                 }
 
-                let mut all_types = types.clone();
-                let asterisked = composites.iter().map(|s| format!("*{}", s));
-                all_types.extend(asterisked);
+                // Add the node to the sorter
+                ts.insert(name.clone());
 
-                all_defs.push(format!(
-                    "skerry::define_error!({}, [{}]);",
-                    &name,
-                    all_types.join(",")
-                ));
+                // For every composite this error depends on, add a dependency link
+                for dependency in composites {
+                    ts.add_dependency(dependency.clone(), name.clone());
+                }
 
                 all_arms.push(format!(
                     "    ({:?}, {}) => {{ crate::errors::{} }};",
                     file, line, &name
                 ));
             }
+        }
+    }
+
+    let mut sorted_order = Vec::new();
+
+    while let Some(name) = ts.pop() {
+        sorted_order.push(name);
+    }
+
+    // Cycle detected
+    if !ts.is_empty() {
+        panic!("Circular dependency detected in error definitions!");
+    }
+
+    for name in sorted_order.into_iter() {
+        if let Some(ErrorDefinition::Composite(CompositeError {
+            types, composites, ..
+        })) = type_definitions.get(&name)
+        {
+            let mut all_types = types.clone();
+            let asterisked = composites.iter().map(|s| format!("*{}", s));
+            all_types.extend(asterisked);
+            all_defs.push(format!(
+                "skerry::define_error!({}, [{}]);",
+                &name,
+                all_types.join(",")
+            ));
         }
     }
 
