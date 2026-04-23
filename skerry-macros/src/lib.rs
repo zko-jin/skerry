@@ -260,7 +260,7 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
     let macro_ident = format_ident!("{}_errors", format_snake_case(&ty.to_string()));
 
     cfg_if! {
-        if #[cfg(feature = "custom_result")] {
+        if #[cfg(feature = "custom-result")] {
             let features =
                 quote! {
                     impl IntoSkerryGlobal for #ty {

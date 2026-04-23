@@ -11,7 +11,7 @@ use quote::{
     quote,
     quote_spanned,
 };
-#[cfg(not(feature = "custom_result"))]
+#[cfg(not(feature = "custom-result"))]
 use syn::{
     Expr,
     ExprTry,
@@ -31,10 +31,10 @@ use syn::{
     parse_quote,
 };
 
-#[cfg(not(feature = "custom_result"))]
+#[cfg(not(feature = "custom-result"))]
 pub struct QuestionMarkTransformer;
 
-#[cfg(not(feature = "custom_result"))]
+#[cfg(not(feature = "custom-result"))]
 impl VisitMut for QuestionMarkTransformer {
     fn visit_expr_mut(&mut self, node: &mut Expr) {
         visit_mut::visit_expr_mut(self, node);
@@ -57,7 +57,7 @@ struct SkerryFnInput {
 }
 
 impl SkerryFnInput {
-    #[cfg(not(feature = "custom_result"))]
+    #[cfg(not(feature = "custom-result"))]
     fn from_fn(mut item: ItemFn) -> Self {
         let mut transformer = QuestionMarkTransformer;
         transformer.visit_item_fn_mut(&mut item);
@@ -69,7 +69,7 @@ impl SkerryFnInput {
         }
     }
 
-    #[cfg(feature = "custom_result")]
+    #[cfg(feature = "custom-result")]
     fn from_fn(item: ItemFn) -> Self {
         Self {
             sig: item.sig,
@@ -79,7 +79,7 @@ impl SkerryFnInput {
         }
     }
 
-    #[cfg(not(feature = "custom_result"))]
+    #[cfg(not(feature = "custom-result"))]
     fn from_trait_fn(mut item: TraitItemFn) -> Self {
         let mut transformer = QuestionMarkTransformer;
         transformer.visit_trait_item_fn_mut(&mut item);
@@ -91,7 +91,7 @@ impl SkerryFnInput {
         }
     }
 
-    #[cfg(feature = "custom_result")]
+    #[cfg(feature = "custom-result")]
     fn from_trait_fn(item: TraitItemFn) -> Self {
         Self {
             sig: item.sig,

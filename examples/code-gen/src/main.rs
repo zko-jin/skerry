@@ -7,7 +7,7 @@ use skerry::{
 skerry::include!();
 
 fn main() {
-    let _ = test();
+    let _ = my_fn_1();
 }
 
 #[skerry_error]
@@ -16,9 +16,11 @@ pub struct ErrA;
 #[skerry_error]
 pub struct ErrB;
 
-fn test() -> Result<(), e![ErrA, ErrB]> {
-    Ok(())
+fn my_fn_1() -> errors::Result<(), e![ErrA, ErrB]> {
+    errors::Ok(())
 }
-fn test_2() -> Result<(), e![ErrA, *TestError]> {
-    Ok(())
+
+fn my_fn_2() -> errors::Result<(), e![ErrA, *MyFn1Error]> {
+    my_fn_1()?;
+    errors::Ok(())
 }

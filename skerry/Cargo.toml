@@ -17,5 +17,5 @@ paste = "1.0.15"
 
 [features]
 default = []
-custom_result = ["skerry-macros/custom_result"]
-code-gen = ["skerry-macros/code-gen", "skerry-macros/custom_result"]
+custom-result = ["skerry-macros/custom-result"]
+code-gen = ["skerry-macros/code-gen", "custom-result"]

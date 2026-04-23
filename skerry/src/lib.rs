@@ -268,7 +268,7 @@
 //! ```
 //! # Custom Result Feature
 //!
-//! The `custom_result` feature implements a specialized result type and leverages the
+//! The `custom-result` feature implements a specialized result type and leverages the
 //! unstable features to enable even more automation.
 //!
 //! ## Nightly Features Required
@@ -284,7 +284,7 @@
 //!
 //! ## Overview
 //!
-//! Enabling `custom_result` changes the behavior of the `?` operator to support
+//! Enabling `custom-result` changes the behavior of the `?` operator to support
 //! automatic conversion into `GlobalErrors<I>`.
 //!
 //! | Feature Gate | Effect |
@@ -328,7 +328,7 @@
 //! }
 //! ```
 //!
-//! ### Automated Approach with `custom_result`
+//! ### Automated Approach with `custom-result`
 //! By adding `#![skerry]` to the top of your module, the boilerplate is handled
 //! automatically.
 //!
@@ -367,7 +367,7 @@
 //! compile-time. If you try to use `?` on a function whose errors are not represented
 //! in your current return tuple, the compiler will refuse to build.
 #![cfg_attr(
-    feature = "custom_result",
+    feature = "custom-result",
     allow(unused_features),
     feature(try_trait_v2),
     feature(custom_inner_attributes),
