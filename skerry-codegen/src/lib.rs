@@ -9,11 +9,9 @@ use quote::ToTokens;
 use syn::{
     GenericArgument,
     Item,
-    ItemFn,
     ItemImpl,
     ItemTrait,
     PathArguments,
-    ReturnType,
     Type,
     spanned::Spanned,
     visit::{
@@ -23,14 +21,14 @@ use syn::{
 };
 use topological_sort::TopologicalSort;
 
-pub struct CompositeError {
+struct CompositeError {
     types: Vec<String>,
     composites: Vec<String>,
     file: String,
     line: usize,
 }
 
-pub enum ErrorDefinition {
+enum ErrorDefinition {
     Simple {
         raw: String,
         file: String,
@@ -250,7 +248,7 @@ fn extract_skerry_macro_types(ty: &Type) -> Option<(Vec<String>, Vec<String>)> {
     None
 }
 
-fn main() {
+pub fn skerry_generate() {
     println!("cargo:rerun-if-changed=src");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 

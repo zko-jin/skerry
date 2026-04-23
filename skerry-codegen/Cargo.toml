@@ -1,15 +1,9 @@
 [package]
-name = "code-gen"
+name = "skerry-codegen"
 version = "0.1.0"
 edition = "2024"
 
-# [lints]
-# workspace = true
-
 [dependencies]
-skerry = { workspace = true, features = ["code-gen"] }
-
-[build-dependencies]
 walkdir = "2.5.0"
 hashbrown = "0.17.0"
 syn = { version = "2.0.117", features = ["full", "visit", "parsing", "extra-traits"] }

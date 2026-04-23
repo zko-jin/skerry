@@ -1,0 +1,10 @@
+[package]
+name = "codegen"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+skerry = { workspace = true, features = ["codegen"] }
+
+[build-dependencies]
+skerry-codegen = { workspace = true }

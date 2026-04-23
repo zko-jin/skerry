@@ -45,16 +45,16 @@ mod internal {
     pub mod skerry_trait;
 }
 
-#[cfg(feature = "code-gen")]
+#[cfg(feature = "codegen")]
 mod code_gen;
 
-#[cfg(feature = "code-gen")]
+#[cfg(feature = "codegen")]
 #[proc_macro]
 pub fn e(input: TokenStream) -> TokenStream {
     code_gen::e(input)
 }
 
-#[cfg(feature = "code-gen")]
+#[cfg(feature = "codegen")]
 #[proc_macro_attribute]
 pub fn skerry_error(_attr: TokenStream, _item: TokenStream) -> TokenStream {
     let span = proc_macro::Span::call_site();

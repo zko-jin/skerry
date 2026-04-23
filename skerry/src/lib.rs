@@ -386,7 +386,7 @@ pub use skerry_macros::{
     skerry_trait,
 };
 
-#[cfg(feature = "code-gen")]
+#[cfg(feature = "codegen")]
 #[macro_export]
 macro_rules! include {
     () => {
@@ -394,13 +394,7 @@ macro_rules! include {
     };
 }
 
-#[cfg(feature = "code-gen")]
-#[macro_export]
-macro_rules! build_skerry {
-    () => {};
-}
-
-#[cfg(feature = "code-gen")]
+#[cfg(feature = "codegen")]
 pub use skerry_macros::{
     e,
     skerry_error,
