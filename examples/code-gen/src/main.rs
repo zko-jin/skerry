@@ -24,3 +24,9 @@ fn my_fn_2() -> errors::Result<(), e![ErrA, *MyFn1Error]> {
     my_fn_1()?;
     errors::Ok(())
 }
+
+trait TestTrait {
+    fn my_fn_1() -> errors::Result<(), e![ErrA, ErrB, *MyFn2Error]> {
+        errors::Ok(())
+    }
+}

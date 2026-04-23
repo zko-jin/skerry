@@ -10,6 +10,8 @@ use syn::{
     GenericArgument,
     Item,
     ItemFn,
+    ItemImpl,
+    ItemTrait,
     PathArguments,
     ReturnType,
     Type,
@@ -59,6 +61,61 @@ struct SkerryScanner<'a> {
     file_path: &'a str,
     type_definitions: &'a mut HashMap<String, ErrorDefinition>,
     errors: &'a mut Vec<ErrorDefinitionFail>,
+    prefix_stack: Vec<String>,
+}
+
+impl<'a> SkerryScanner<'a> {
+    fn process_function_error(&mut self, ident: &syn::Ident, output: &'a syn::ReturnType) {
+        if let syn::ReturnType::Type(_, ty) = output {
+            if let Some((types, composites)) = extract_skerry_macro_types(ty) {
+                let raw_name = ident.to_string();
+
+                // Convert snake_case to CamelCase
+                let camel_case_name: String = raw_name
+                    .split('_')
+                    .map(|word| {
+                        let mut chars = word.chars();
+                        match chars.next() {
+                            None => String::new(),
+                            Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+                        }
+                    })
+                    .collect();
+
+                let composite_name =
+                    format!("{}{}Error", self.prefix_stack.join(""), camel_case_name);
+
+                if self
+                    .type_definitions
+                    .try_insert(
+                        composite_name.clone(),
+                        ErrorDefinition::Composite(CompositeError {
+                            types,
+                            composites,
+                            file: self.file_path.to_string(),
+                            line: ty.span().start().line,
+                        }),
+                    )
+                    .is_err()
+                {
+                    self.errors.push(ErrorDefinitionFail {
+                        cause: DefFailCause::NameConflict {
+                            name: composite_name,
+                        },
+                        file: self.file_path.to_string(),
+                        line: ty.span().start().line,
+                    });
+                }
+            } else {
+                // If it's a function but doesn't have the skerry macro in Result
+                self.errors.push(ErrorDefinitionFail {
+                    cause: DefFailCause::NotInResult,
+                    file: self.file_path.to_string(),
+                    line: ty.span().start().line,
+                });
+            }
+        }
+    }
 }
 
 impl<'a> Visit<'a> for SkerryScanner<'a> {
@@ -115,52 +172,41 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
         visit::visit_item(self, i);
     }
 
-    fn visit_item_fn(&mut self, i: &'a ItemFn) {
-        if let ReturnType::Type(_, ty) = &i.sig.output {
-            if let Some((types, composites)) = extract_skerry_macro_types(ty) {
-                let raw_name = i.sig.ident.to_string();
-                let camel_case_name: String = raw_name
-                    .split('_')
-                    .map(|word| {
-                        let mut chars = word.chars();
-                        match chars.next() {
-                            None => String::new(),
-                            Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
-                        }
-                    })
-                    .collect();
-                let composite_name = format!("{}Error", camel_case_name);
+    fn visit_item_impl(&mut self, i: &'a ItemImpl) {
+        let self_name = if let Type::Path(tp) = &*i.self_ty {
+            tp.path.segments.last().map(|s| s.ident.to_string())
+        } else {
+            None
+        };
 
-                if self
-                    .type_definitions
-                    .try_insert(
-                        composite_name.clone(),
-                        ErrorDefinition::Composite(CompositeError {
-                            types,
-                            composites,
-                            file: self.file_path.to_string(),
-                            line: ty.span().start().line,
-                        }),
-                    )
-                    .is_err()
-                {
-                    self.errors.push(ErrorDefinitionFail {
-                        cause: DefFailCause::NameConflict {
-                            name: composite_name,
-                        },
-                        file: self.file_path.to_string(),
-                        line: ty.span().start().line,
-                    });
-                }
-            } else {
-                self.errors.push(ErrorDefinitionFail {
-                    cause: DefFailCause::NotInResult,
-                    file: self.file_path.to_string(),
-                    line: ty.span().start().line,
-                });
-            }
-        }
-        visit::visit_item_fn(self, i);
+        let prefix = self_name.unwrap_or_else(|| "Unknown".to_string());
+
+        self.prefix_stack.push(prefix);
+        visit::visit_item_impl(self, i);
+        self.prefix_stack.pop();
+    }
+
+    fn visit_item_trait(&mut self, i: &'a ItemTrait) {
+        let prefix = i.ident.to_string();
+
+        self.prefix_stack.push(prefix);
+        visit::visit_item_trait(self, i);
+        self.prefix_stack.pop();
+    }
+
+    fn visit_item_fn(&mut self, i: &'a syn::ItemFn) {
+        self.process_function_error(&i.sig.ident, &i.sig.output);
+        syn::visit::visit_item_fn(self, i);
+    }
+
+    fn visit_trait_item_fn(&mut self, i: &'a syn::TraitItemFn) {
+        self.process_function_error(&i.sig.ident, &i.sig.output);
+        syn::visit::visit_trait_item_fn(self, i);
+    }
+
+    fn visit_impl_item_fn(&mut self, i: &'a syn::ImplItemFn) {
+        self.process_function_error(&i.sig.ident, &i.sig.output);
+        syn::visit::visit_impl_item_fn(self, i);
     }
 }
 
@@ -232,6 +278,7 @@ fn main() {
                 file_path: path.to_str().unwrap_or("unknown"),
                 type_definitions: &mut type_definitions,
                 errors: &mut failures,
+                prefix_stack: Vec::new(),
             };
 
             visit::visit_file(&mut scanner, &syntax_tree);
