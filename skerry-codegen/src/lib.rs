@@ -60,6 +60,8 @@ struct SkerryScanner<'a> {
     type_definitions: &'a mut HashMap<String, ErrorDefinition>,
     errors: &'a mut Vec<ErrorDefinitionFail>,
     prefix_stack: Vec<String>,
+    module_stack: Vec<String>,
+    module: &'a mut Option<String>,
 }
 
 impl<'a> SkerryScanner<'a> {
@@ -131,6 +133,21 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
                 let attrs = std::mem::replace(&mut e.attrs, vec![]);
                 (attrs, ident, e.to_token_stream().to_string())
             }
+            Item::Macro(m) => {
+                if m.mac
+                    .path
+                    .segments
+                    .last()
+                    .map_or(false, |s| s.ident == "skerry_include")
+                {
+                    if self.module.is_some() {
+                        panic!("skerry_include!() called twice.");
+                    }
+                    *self.module = Some(self.module_stack.join("::"));
+                }
+                visit::visit_item(self, i);
+                return;
+            }
             _ => {
                 visit::visit_item(self, i);
                 return;
@@ -168,6 +185,12 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
         }
 
         visit::visit_item(self, i);
+    }
+
+    fn visit_item_mod(&mut self, i: &'a syn::ItemMod) {
+        self.module_stack.push(i.ident.to_string());
+        syn::visit::visit_item_mod(self, i);
+        self.module_stack.pop();
     }
 
     fn visit_item_impl(&mut self, i: &'a ItemImpl) {
@@ -248,204 +271,232 @@ fn extract_skerry_macro_types(ty: &Type) -> Option<(Vec<String>, Vec<String>)> {
     None
 }
 
-pub fn skerry_generate() {
-    println!("cargo:rerun-if-changed=src");
-    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+pub struct SkerryGenerator {}
 
-    let mut type_definitions = HashMap::new();
-    let mut failures: Vec<ErrorDefinitionFail> = Vec::new();
-
-    for entry in walkdir::WalkDir::new("src")
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
-        if path.extension().map_or(false, |ext| ext == "rs") {
-            let content = fs::read_to_string(path).unwrap_or_default();
-
-            if !content.contains("e![") && !content.contains("#[skerry_error]") {
-                continue;
-            }
-
-            let syntax_tree = match syn::parse_file(&content) {
-                Ok(tree) => tree,
-                Err(_) => continue, // Skip files with syntax errors
-            };
-
-            let mut scanner = SkerryScanner {
-                file_path: path.to_str().unwrap_or("unknown"),
-                type_definitions: &mut type_definitions,
-                errors: &mut failures,
-                prefix_stack: Vec::new(),
-            };
-
-            visit::visit_file(&mut scanner, &syntax_tree);
-        }
+impl SkerryGenerator {
+    pub fn new() -> Self {
+        SkerryGenerator {}
     }
 
-    let mut all_defs = Vec::new();
-    let mut all_arms = Vec::new();
-    let mut ts = TopologicalSort::<String>::new();
-    let mut plain_defs = String::new();
+    pub fn generate(self) {
+        println!("cargo:rerun-if-changed=src");
+        let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // Validate and generate errors
-    for (name, def) in &type_definitions {
-        match def {
-            ErrorDefinition::Simple { raw, file, line } => {
-                all_arms.push(format!(
-                    "    ({:?}, {}) => {{ use crate::errors::{}; }};",
-                    file, line, name
-                ));
+        let mut type_definitions = HashMap::new();
+        let mut failures: Vec<ErrorDefinitionFail> = Vec::new();
+        let mut module = None;
 
-                plain_defs.push_str(&raw);
-            }
-            ErrorDefinition::Composite(CompositeError {
-                types,
-                composites,
-                file,
-                line,
-            }) => {
-                let mut missing_errors = vec![];
-                let mut remove_asterisk = vec![];
-                let mut add_asterisk = vec![];
+        for entry in walkdir::WalkDir::new("src")
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
 
-                // Checking for errors
-                for plain_type in types {
-                    if let Some(t) = type_definitions.get(plain_type) {
-                        if let ErrorDefinition::Composite { .. } = t {
-                            add_asterisk.push(plain_type.clone());
-                        }
-                    } else {
-                        missing_errors.push(plain_type.clone());
-                    }
+            if path.extension().map_or(false, |ext| ext == "rs") {
+                let relative = path.strip_prefix("src").unwrap();
+                let mut module_stack = vec!["crate".to_string()];
+                for component in relative.parent().unwrap().components() {
+                    module_stack.push(component.as_os_str().to_string_lossy().to_string());
                 }
-                for composite in composites {
-                    if let Some(t) = type_definitions.get(composite) {
-                        if let ErrorDefinition::Simple { .. } = t {
-                            remove_asterisk.push(composite.clone());
-                        }
-                    } else {
-                        missing_errors.push(composite.clone());
-                    }
+                let file_stem = path.file_stem().unwrap().to_string_lossy().to_string();
+                if file_stem != "mod" && file_stem != "lib" && file_stem != "main" {
+                    module_stack.push(file_stem);
                 }
 
-                if !(missing_errors.is_empty()
-                    && remove_asterisk.is_empty()
-                    && add_asterisk.is_empty())
+                let content = fs::read_to_string(path).unwrap_or_default();
+
+                if !content.contains("e![")
+                    && !content.contains("#[skerry_error]")
+                    && !content.contains("skerry_include!")
                 {
-                    failures.push(ErrorDefinitionFail {
-                        cause: DefFailCause::WrongErrorExpansion {
-                            missing_errors,
-                            remove_asterisk,
-                            add_asterisk,
-                        },
-                        file: file.clone(),
-                        line: *line,
-                    });
                     continue;
                 }
 
-                // Add the node to the sorter
-                ts.insert(name.clone());
+                let syntax_tree = match syn::parse_file(&content) {
+                    Ok(tree) => tree,
+                    Err(_) => continue, // Skip files with syntax errors
+                };
 
-                // For every composite this error depends on, add a dependency link
-                for dependency in composites {
-                    ts.add_dependency(dependency.clone(), name.clone());
+                let mut scanner = SkerryScanner {
+                    file_path: path.to_str().unwrap_or("unknown"),
+                    type_definitions: &mut type_definitions,
+                    errors: &mut failures,
+                    prefix_stack: Vec::new(),
+                    module_stack,
+                    module: &mut module,
+                };
+
+                visit::visit_file(&mut scanner, &syntax_tree);
+            }
+        }
+
+        let Some(module) = module else {
+            panic!("skerry_include!(); never called!");
+        };
+
+        let mut all_defs = Vec::new();
+        let mut all_arms = Vec::new();
+        let mut ts = TopologicalSort::<String>::new();
+        let mut plain_defs = String::new();
+
+        // Validate and generate errors
+        for (name, def) in &type_definitions {
+            match def {
+                ErrorDefinition::Simple { raw, file, line } => {
+                    all_arms.push(format!(
+                        "    ({:?}, {}) => {{ #[allow(unused_imports)]\nuse {}::{}; }};",
+                        file, line, module, name
+                    ));
+
+                    plain_defs.push_str(&raw);
                 }
+                ErrorDefinition::Composite(CompositeError {
+                    types,
+                    composites,
+                    file,
+                    line,
+                }) => {
+                    let mut missing_errors = vec![];
+                    let mut remove_asterisk = vec![];
+                    let mut add_asterisk = vec![];
 
-                all_arms.push(format!(
-                    "    ({:?}, {}) => {{ crate::errors::{} }};",
-                    file, line, &name
+                    // Checking for errors
+                    for plain_type in types {
+                        if let Some(t) = type_definitions.get(plain_type) {
+                            if let ErrorDefinition::Composite { .. } = t {
+                                add_asterisk.push(plain_type.clone());
+                            }
+                        } else {
+                            missing_errors.push(plain_type.clone());
+                        }
+                    }
+                    for composite in composites {
+                        if let Some(t) = type_definitions.get(composite) {
+                            if let ErrorDefinition::Simple { .. } = t {
+                                remove_asterisk.push(composite.clone());
+                            }
+                        } else {
+                            missing_errors.push(composite.clone());
+                        }
+                    }
+
+                    if !(missing_errors.is_empty()
+                        && remove_asterisk.is_empty()
+                        && add_asterisk.is_empty())
+                    {
+                        failures.push(ErrorDefinitionFail {
+                            cause: DefFailCause::WrongErrorExpansion {
+                                missing_errors,
+                                remove_asterisk,
+                                add_asterisk,
+                            },
+                            file: file.clone(),
+                            line: *line,
+                        });
+                        continue;
+                    }
+
+                    // Add the node to the sorter
+                    ts.insert(name.clone());
+
+                    // For every composite this error depends on, add a dependency link
+                    for dependency in composites {
+                        ts.add_dependency(dependency.clone(), name.clone());
+                    }
+
+                    all_arms.push(format!(
+                        "    ({:?}, {}) => {{ {}::{} }};",
+                        file, line, module, &name
+                    ));
+                }
+            }
+        }
+
+        let mut sorted_order = Vec::new();
+
+        while let Some(name) = ts.pop() {
+            sorted_order.push(name);
+        }
+
+        // Cycle detected
+        if !ts.is_empty() {
+            panic!("Circular dependency detected in error definitions!");
+        }
+
+        for name in sorted_order.into_iter() {
+            if let Some(ErrorDefinition::Composite(CompositeError {
+                types, composites, ..
+            })) = type_definitions.get(&name)
+            {
+                let mut all_types = types.clone();
+                let asterisked = composites.iter().map(|s| format!("*{}", s));
+                all_types.extend(asterisked);
+                all_defs.push(format!(
+                    "skerry::define_error!({}, [{}]);",
+                    &name,
+                    all_types.join(",")
                 ));
             }
         }
-    }
 
-    let mut sorted_order = Vec::new();
+        for error in failures {
+            let error_message = match error.cause {
+                DefFailCause::NameConflict { name } => {
+                    format!("Conflicting name definition: {}", name)
+                }
+                DefFailCause::WrongErrorExpansion {
+                    missing_errors,
+                    remove_asterisk,
+                    add_asterisk,
+                } => {
+                    let mut lines = Vec::new();
 
-    while let Some(name) = ts.pop() {
-        sorted_order.push(name);
-    }
+                    if !missing_errors.is_empty() {
+                        lines.push(format!(
+                            "The following types were not found: [{}]",
+                            missing_errors.join(", ")
+                        ));
+                    }
 
-    // Cycle detected
-    if !ts.is_empty() {
-        panic!("Circular dependency detected in error definitions!");
-    }
+                    if !add_asterisk.is_empty() {
+                        lines.push(format!(
+                            "Add '*' prefix to composite errors: [{}]",
+                            add_asterisk.join(", ")
+                        ));
+                    }
 
-    for name in sorted_order.into_iter() {
-        if let Some(ErrorDefinition::Composite(CompositeError {
-            types, composites, ..
-        })) = type_definitions.get(&name)
-        {
-            let mut all_types = types.clone();
-            let asterisked = composites.iter().map(|s| format!("*{}", s));
-            all_types.extend(asterisked);
-            all_defs.push(format!(
-                "skerry::define_error!({}, [{}]);",
-                &name,
-                all_types.join(",")
+                    if !remove_asterisk.is_empty() {
+                        lines.push(format!(
+                            "Remove the '*' on plain errors: [{}]",
+                            remove_asterisk.join(", ")
+                        ));
+                    }
+
+                    lines.join("\n")
+                }
+                DefFailCause::NotInResult => "e![] can only be used inside Result".to_string(),
+            };
+
+            all_arms.push(format!(
+                "    ({file:?}, {line}) => {{ compile_error!(\"{file}:{line} - {msg}\") }};",
+                file = error.file,
+                line = error.line,
+                msg = error_message
             ));
         }
+
+        let header = "/* GENERATED BY SKERRY CODEGEN */\n";
+        let output = format!(
+                "{}\n#[skerry::skerry_mod]\nmod auto {{
+                {plain_defs}
+            }}
+            {defs}\n\n#[macro_export]\nmacro_rules! skerry_invoke {{\n{arms}\n    ($file:expr, $line:expr) => {{ compile_error!(concat!(\"Skerry Sync Error: No macro generated for \", $file, \":\", $line)); }};\n}}",
+                header,
+                plain_defs = plain_defs,
+                defs = all_defs.join("\n"),
+                arms = all_arms.join("\n")
+            );
+
+        fs::write(out_dir.join("skerry_gen.rs"), output).unwrap();
     }
-
-    for error in failures {
-        let error_message = match error.cause {
-            DefFailCause::NameConflict { name } => format!("Conflicting name definition: {}", name),
-            DefFailCause::WrongErrorExpansion {
-                missing_errors,
-                remove_asterisk,
-                add_asterisk,
-            } => {
-                let mut lines = Vec::new();
-
-                if !missing_errors.is_empty() {
-                    lines.push(format!(
-                        "The following types were not found: [{}]",
-                        missing_errors.join(", ")
-                    ));
-                }
-
-                if !add_asterisk.is_empty() {
-                    lines.push(format!(
-                        "Add '*' prefix to composite errors: [{}]",
-                        add_asterisk.join(", ")
-                    ));
-                }
-
-                if !remove_asterisk.is_empty() {
-                    lines.push(format!(
-                        "Remove the '*' on plain errors: [{}]",
-                        remove_asterisk.join(", ")
-                    ));
-                }
-
-                lines.join("\n")
-            }
-            DefFailCause::NotInResult => "e![] can only be used inside Result".to_string(),
-        };
-
-        all_arms.push(format!(
-            "    ({file:?}, {line}) => {{ compile_error!(\"{file}:{line} - {msg}\") }};",
-            file = error.file,
-            line = error.line,
-            msg = error_message
-        ));
-    }
-
-    let header = "/* GENERATED BY SKERRY CODEGEN */\n";
-    let output = format!(
-        "{}\npub mod errors {{
-    #[skerry::skerry_mod]
-    mod auto {{
-        {plain_defs}
-    }}
-    {defs}
-    \n}}\n\n#[macro_export]\nmacro_rules! skerry_invoke {{\n{arms}\n    ($file:expr, $line:expr) => {{ compile_error!(concat!(\"Skerry Sync Error: No macro generated for \", $file, \":\", $line)); }};\n}}",
-        header,
-        plain_defs = plain_defs,
-        defs = all_defs.join("\n"),
-        arms = all_arms.join("\n")
-    );
-
-    fs::write(out_dir.join("skerry_gen.rs"), output).unwrap();
 }

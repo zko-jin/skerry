@@ -4,8 +4,7 @@ use skerry::{
     e,
     skerry_error,
 };
-
-skerry::include!();
+mod errors;
 
 fn main() {
     let _ = my_fn_1();
@@ -17,11 +16,16 @@ pub struct ErrA;
 #[skerry_error]
 pub struct ErrB;
 
+#[skerry_error]
+pub struct ErrC {
+    inner: u32,
+}
+
 fn my_fn_1() -> errors::Result<(), e![ErrA, ErrB]> {
     errors::Ok(())
 }
 
-fn my_fn_2() -> errors::Result<(), e![ErrA, *MyFn1Error]> {
+pub fn my_fn_2() -> errors::Result<(), e![ErrA, *MyFn1Error]> {
     my_fn_1()?;
     errors::Ok(())
 }

@@ -388,7 +388,7 @@ pub use skerry_macros::{
 
 #[cfg(feature = "codegen")]
 #[macro_export]
-macro_rules! include {
+macro_rules! skerry_include {
     () => {
         include!(concat!(env!("OUT_DIR"), "/skerry_gen.rs"));
     };

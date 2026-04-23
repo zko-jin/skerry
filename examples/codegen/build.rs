@@ -1,3 +1,5 @@
+use skerry_codegen::SkerryGenerator;
+
 fn main() {
-    skerry_codegen::skerry_generate();
+    SkerryGenerator::new().generate();
 }
