@@ -1,3 +1,4 @@
+#![feature(try_trait_v2)]
 use skerry::{
     e,
     skerry_error,
@@ -10,11 +11,15 @@ fn main() {
 }
 
 #[skerry_error]
-struct ErrA;
+pub struct ErrA;
 
 #[skerry_error]
-struct ErrB;
+pub struct ErrB;
 
 fn test() -> Result<(), e![ErrA, ErrB]> {
+    Ok(())
+}
+
+fn test_2() -> Result<(), e![ErrA, *TestError]> {
     Ok(())
 }

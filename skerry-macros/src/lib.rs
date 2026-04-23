@@ -56,11 +56,7 @@ pub fn e(input: TokenStream) -> TokenStream {
 
 #[cfg(feature = "code-gen")]
 #[proc_macro_attribute]
-pub fn skerry_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    use proc_macro2::TokenStream;
-
-    let item: TokenStream = item.into();
-
+pub fn skerry_error(_attr: TokenStream, _item: TokenStream) -> TokenStream {
     let span = proc_macro::Span::call_site();
     let line = span.start().line();
     let line_lit = proc_macro2::Literal::usize_unsuffixed(line);
@@ -73,7 +69,6 @@ pub fn skerry_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     quote! {
         skerry_invoke!{ #short_path, #line_lit }
-        #item
     }
     .into()
 }

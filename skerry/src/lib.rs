@@ -407,6 +407,7 @@ pub use skerry_macros::{
 };
 
 pub mod skerry_internals {
+    pub use paste::paste;
     pub use skerry_macros::*;
 
     pub use crate::{

@@ -1,7 +1,7 @@
 #[macro_export]
 macro_rules! create_fn_error {
     ($type:ident, [$($e:path),*], [$($starred:ident),*]) => {
-        paste::paste! {
+        skerry::skerry_internals::paste! {
             skerry::skerry_internals::expand_starred_lists! {
                 @step
                 target: [$type],

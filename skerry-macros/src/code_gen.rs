@@ -23,6 +23,14 @@ struct EInput {
 impl Parse for EInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut _errors = Vec::new();
+
+        if input.is_empty() {
+            return Err(syn::Error::new(
+                input.span(),
+                "e![] requires you to define at least one error",
+            ));
+        }
+
         while !input.is_empty() {
             if input.peek(Token![*]) {
                 input.parse::<Token![*]>()?;

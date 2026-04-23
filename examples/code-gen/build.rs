@@ -5,6 +5,7 @@ use std::{
 };
 
 use hashbrown::HashMap;
+use quote::ToTokens;
 use syn::{
     GenericArgument,
     Item,
@@ -19,20 +20,18 @@ use syn::{
     },
 };
 
-// --- Data Structures ---
-
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-struct CompositeErrorDefinition {
-    plain_types: Vec<String>,
-    composite_types: Vec<String>,
-    file: String,
-    line: usize,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-struct ErrorDefinition {
-    file: String,
-    line: usize,
+pub enum ErrorDefinition {
+    Simple {
+        raw: String,
+        file: String,
+        line: usize,
+    },
+    Composite {
+        types: Vec<String>,
+        composites: Vec<String>,
+        file: String,
+        line: usize,
+    },
 }
 
 enum DefFailCause {
@@ -40,8 +39,9 @@ enum DefFailCause {
         name: String,
     },
     WrongErrorExpansion {
-        missing_plain_errors: Vec<String>,
-        missing_composite_errors: Vec<String>,
+        missing_errors: Vec<String>,
+        remove_asterisk: Vec<String>,
+        add_asterisk: Vec<String>,
     },
     NotInResult,
 }
@@ -55,22 +55,31 @@ struct ErrorDefinitionFail {
 struct SkerryScanner<'a> {
     file_path: &'a str,
     type_definitions: &'a mut HashMap<String, ErrorDefinition>,
-    composite_definitions: &'a mut HashMap<String, CompositeErrorDefinition>,
     errors: &'a mut Vec<ErrorDefinitionFail>,
 }
 
 impl<'a> Visit<'a> for SkerryScanner<'a> {
     fn visit_item(&mut self, i: &'a Item) {
         let attrs = match i {
-            Item::Struct(s) => (&s.attrs, &s.ident, s.struct_token.span),
-            Item::Enum(e) => (&e.attrs, &e.ident, e.enum_token.span),
+            Item::Struct(s) => {
+                let ident = &s.ident;
+                let mut s = s.clone();
+                let attrs = std::mem::replace(&mut s.attrs, vec![]);
+                (attrs, ident, s.to_token_stream().to_string())
+            }
+            Item::Enum(e) => {
+                let ident = &e.ident;
+                let mut e = e.clone();
+                let attrs = std::mem::replace(&mut e.attrs, vec![]);
+                (attrs, ident, e.to_token_stream().to_string())
+            }
             _ => {
                 visit::visit_item(self, i);
                 return;
             }
         };
 
-        let (attrs, ident, _) = attrs;
+        let (attrs, ident, raw) = attrs;
         if let Some(attr) = attrs.iter().find_map(|attr| {
             if attr.path().is_ident("skerry_error") {
                 Some(attr)
@@ -82,7 +91,8 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
                 .type_definitions
                 .try_insert(
                     ident.to_string(),
-                    ErrorDefinition {
+                    ErrorDefinition::Simple {
+                        raw,
                         file: self.file_path.to_string(),
                         line: attr.span().start().line,
                     },
@@ -103,20 +113,28 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
     }
 
     fn visit_item_fn(&mut self, i: &'a ItemFn) {
-        // Look for Result<T, e![...]>
         if let ReturnType::Type(_, ty) = &i.sig.output {
-            if let Some((plain_types, composite_types)) = extract_skerry_macro_types(ty) {
+            if let Some((types, composites)) = extract_skerry_macro_types(ty) {
                 let raw_name = i.sig.ident.to_string();
-                let composite_name =
-                    format!("{}{}Error", &raw_name[..1].to_uppercase(), &raw_name[1..]);
+                let camel_case_name: String = raw_name
+                    .split('_')
+                    .map(|word| {
+                        let mut chars = word.chars();
+                        match chars.next() {
+                            None => String::new(),
+                            Some(f) => f.to_uppercase().collect::<String>() + chars.as_str(),
+                        }
+                    })
+                    .collect();
+                let composite_name = format!("{}Error", camel_case_name);
 
                 if self
-                    .composite_definitions
+                    .type_definitions
                     .try_insert(
                         composite_name.clone(),
-                        CompositeErrorDefinition {
-                            plain_types,
-                            composite_types,
+                        ErrorDefinition::Composite {
+                            types,
+                            composites,
                             file: self.file_path.to_string(),
                             line: ty.span().start().line,
                         },
@@ -143,7 +161,6 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
     }
 }
 
-// Helper to extract types from Result<_, e![Type1, *Type2]>
 fn extract_skerry_macro_types(ty: &Type) -> Option<(Vec<String>, Vec<String>)> {
     let path = match ty {
         Type::Path(tp) => &tp.path,
@@ -159,9 +176,10 @@ fn extract_skerry_macro_types(ty: &Type) -> Option<(Vec<String>, Vec<String>)> {
     if let PathArguments::AngleBracketed(args) = &last_seg.arguments {
         if let Some(GenericArgument::Type(Type::Macro(m))) = args.args.get(1) {
             if m.mac.path.segments.last()?.ident == "e" {
-                let content = m.mac.tokens.to_string();
-                let mut plains = Vec::new();
-                let mut starred = Vec::new();
+                let content: String = m.mac.tokens.to_string();
+
+                let mut types = Vec::new();
+                let mut composites = Vec::new();
 
                 for s in content.split(',') {
                     let trimmed = s.trim();
@@ -170,26 +188,24 @@ fn extract_skerry_macro_types(ty: &Type) -> Option<(Vec<String>, Vec<String>)> {
                     }
 
                     if trimmed.starts_with('*') {
-                        starred.push(trimmed[1..].trim().to_string());
+                        composites.push(trimmed[1..].trim().to_string());
                     } else {
-                        plains.push(trimmed.to_string());
+                        types.push(trimmed.to_string());
                     }
                 }
-                return Some((plains, starred));
+
+                return Some((types, composites));
             }
         }
     }
     None
 }
 
-// --- Main ---
-
 fn main() {
     println!("cargo:rerun-if-changed=src");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     let mut type_definitions = HashMap::new();
-    let mut composite_definitions = HashMap::new();
     let mut failures: Vec<ErrorDefinitionFail> = Vec::new();
 
     for entry in walkdir::WalkDir::new("src")
@@ -212,7 +228,6 @@ fn main() {
             let mut scanner = SkerryScanner {
                 file_path: path.to_str().unwrap_or("unknown"),
                 type_definitions: &mut type_definitions,
-                composite_definitions: &mut composite_definitions,
                 errors: &mut failures,
             };
 
@@ -220,83 +235,141 @@ fn main() {
         }
     }
 
-    // --- Generation Logic ---
-
     let mut all_defs = Vec::new();
     let mut all_arms = Vec::new();
 
-    for def in &composite_definitions {
-        let mut missing_plain_errors = vec![];
-        let mut missing_composite_errors = vec![];
+    let mut plain_defs = String::new();
 
-        // Checking for missing plain types
-        for plain_type in &def.1.plain_types {
-            if !type_definitions.contains_key(plain_type) {
-                missing_plain_errors.push(plain_type.clone());
+    // Validate and generate errors
+    for (name, def) in &type_definitions {
+        match def {
+            ErrorDefinition::Simple { raw, file, line } => {
+                all_arms.push(format!(
+                    "    ({:?}, {}) => {{ use crate::errors::{}; }};",
+                    file, line, name
+                ));
+
+                plain_defs.push_str(&raw);
+            }
+            ErrorDefinition::Composite {
+                types,
+                composites,
+                file,
+                line,
+            } => {
+                let mut missing_errors = vec![];
+                let mut remove_asterisk = vec![];
+                let mut add_asterisk = vec![];
+
+                // Checking for missing plain types
+                for plain_type in types {
+                    if let Some(t) = type_definitions.get(plain_type) {
+                        if let ErrorDefinition::Composite { .. } = t {
+                            add_asterisk.push(plain_type.clone());
+                        }
+                    } else {
+                        missing_errors.push(plain_type.clone());
+                    }
+                }
+                for composite in composites {
+                    if let Some(t) = type_definitions.get(composite) {
+                        if let ErrorDefinition::Simple { .. } = t {
+                            remove_asterisk.push(composite.clone());
+                        }
+                    } else {
+                        missing_errors.push(composite.clone());
+                    }
+                }
+
+                if !(missing_errors.is_empty()
+                    && remove_asterisk.is_empty()
+                    && add_asterisk.is_empty())
+                {
+                    failures.push(ErrorDefinitionFail {
+                        cause: DefFailCause::WrongErrorExpansion {
+                            missing_errors,
+                            remove_asterisk,
+                            add_asterisk,
+                        },
+                        file: file.clone(),
+                        line: *line,
+                    });
+                    continue;
+                }
+
+                let mut all_types = types.clone();
+                let asterisked = composites.iter().map(|s| format!("*{}", s));
+                all_types.extend(asterisked);
+
+                all_defs.push(format!(
+                    "skerry::define_error!({}, [{}]);",
+                    &name,
+                    all_types.join(",")
+                ));
+
+                all_arms.push(format!(
+                    "    ({:?}, {}) => {{ crate::errors::{} }};",
+                    file, line, &name
+                ));
             }
         }
-        // Checking for missing composite types
-        for composite_type in &def.1.composite_types {
-            if !composite_definitions.contains_key(composite_type) {
-                missing_composite_errors.push(composite_type.clone());
-            }
-        }
-
-        if !(missing_plain_errors.is_empty() && missing_composite_errors.is_empty()) {
-            failures.push(ErrorDefinitionFail {
-                cause: DefFailCause::WrongErrorExpansion {
-                    missing_plain_errors,
-                    missing_composite_errors,
-                },
-                file: def.1.file.clone(),
-                line: def.1.line,
-            });
-            continue;
-        }
-
-        let types_str = def.1.plain_types.join(",");
-
-        all_defs.push(format!(
-            "pub enum {} {{
-            {}
-        }}",
-            def.0, types_str
-        ));
-
-        all_arms.push(format!(
-            "    ({:?}, {}) => {{ {} }};",
-            def.1.file, def.1.line, def.0
-        ));
     }
-    for plain_type in type_definitions {
-        all_arms.push(format!(
-            "    ({:?}, {}) => {{}};",
-            plain_type.1.file, plain_type.1.line
-        ));
-    }
+
     for error in failures {
         let error_message = match error.cause {
             DefFailCause::NameConflict { name } => format!("Conflicting name definition: {}", name),
             DefFailCause::WrongErrorExpansion {
-                missing_plain_errors,
-                missing_composite_errors,
-            } => format!(
-                "Errors do not exist: {}, {}",
-                missing_plain_errors.join(","),
-                missing_composite_errors.join(",")
-            ),
+                missing_errors,
+                remove_asterisk,
+                add_asterisk,
+            } => {
+                let mut lines = Vec::new();
+
+                if !missing_errors.is_empty() {
+                    lines.push(format!(
+                        "The following types were not found: [{}]",
+                        missing_errors.join(", ")
+                    ));
+                }
+
+                if !add_asterisk.is_empty() {
+                    lines.push(format!(
+                        "Add '*' prefix to composite errors: [{}]",
+                        add_asterisk.join(", ")
+                    ));
+                }
+
+                if !remove_asterisk.is_empty() {
+                    lines.push(format!(
+                        "Remove the '*' on plain errors: [{}]",
+                        remove_asterisk.join(", ")
+                    ));
+                }
+
+                lines.join("\n")
+            }
             DefFailCause::NotInResult => "e![] can only be used inside Result".to_string(),
         };
+
         all_arms.push(format!(
-            "    ({:?}, {}) => {{ compile_error!(\"{}\") }};",
-            error.file, error.line, error_message
+            "    ({file:?}, {line}) => {{ compile_error!(\"{file}:{line} - {msg}\") }};",
+            file = error.file,
+            line = error.line,
+            msg = error_message
         ));
     }
 
-    let header = "/* GENERATED BY SKERRY CODEGEN */";
+    let header = "/* GENERATED BY SKERRY CODEGEN */\n";
     let output = format!(
-        "{}\n{defs}\n\n#[macro_export]\nmacro_rules! skerry_invoke {{\n{arms}\n    ($file:expr, $line:expr) => {{ compile_error!(concat!(\"Skerry Sync Error: No macro generated for \", $file, \":\", $line)); }};\n}}",
+        "{}\npub mod errors {{
+    #[skerry::skerry_mod]
+    mod auto {{
+        {plain_defs}
+    }}
+    {defs}
+    \n}}\n\n#[macro_export]\nmacro_rules! skerry_invoke {{\n{arms}\n    ($file:expr, $line:expr) => {{ compile_error!(concat!(\"Skerry Sync Error: No macro generated for \", $file, \":\", $line)); }};\n}}",
         header,
+        plain_defs = plain_defs,
         defs = all_defs.join("\n"),
         arms = all_arms.join("\n")
     );
