@@ -369,9 +369,9 @@
 #![cfg_attr(
     feature = "custom-result",
     allow(unused_features),
-    feature(try_trait_v2),
-    feature(custom_inner_attributes),
-    feature(proc_macro_hygiene)
+    // feature(try_trait_v2),
+    // feature(custom_inner_attributes),
+    // feature(proc_macro_hygiene)
 )]
 
 mod helpers;
@@ -390,7 +390,7 @@ pub use skerry_macros::{
 #[macro_export]
 macro_rules! skerry_include {
     () => {
-        include!(concat!(env!("OUT_DIR"), "/skerry_gen.rs"));
+        include!(concat!(env!("OUT_DIR"), "/skerry/skerry_gen.rs"));
     };
 }
 

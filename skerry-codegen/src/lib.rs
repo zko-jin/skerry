@@ -271,16 +271,29 @@ fn extract_skerry_macro_types(ty: &Type) -> Option<(Vec<String>, Vec<String>)> {
     None
 }
 
-pub struct SkerryGenerator {}
+pub struct SkerryGenerator {
+    module_override: Option<String>,
+}
 
 impl SkerryGenerator {
     pub fn new() -> Self {
-        SkerryGenerator {}
+        SkerryGenerator {
+            module_override: None,
+        }
+    }
+
+    /// The path to the module where `skerry_include!()` is called. This is
+    /// automatically detected by the generator, only override if absolutely
+    /// needed.
+    pub fn override_module(mut self, module_path: impl Into<String>) -> Self {
+        self.module_override = Some(module_path.into());
+        self
     }
 
     pub fn generate(self) {
         println!("cargo:rerun-if-changed=src");
-        let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+        let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("skerry");
+        fs::create_dir(&out_dir).unwrap();
 
         let mut type_definitions = HashMap::new();
         let mut failures: Vec<ErrorDefinitionFail> = Vec::new();
@@ -293,6 +306,15 @@ impl SkerryGenerator {
             let path = entry.path();
 
             if path.extension().map_or(false, |ext| ext == "rs") {
+                let content = fs::read_to_string(path).unwrap_or_default();
+
+                if !content.contains("e![")
+                    && !content.contains("#[skerry_error]")
+                    && !content.contains("skerry_include!")
+                {
+                    continue;
+                }
+
                 let relative = path.strip_prefix("src").unwrap();
                 let mut module_stack = vec!["crate".to_string()];
                 for component in relative.parent().unwrap().components() {
@@ -301,15 +323,6 @@ impl SkerryGenerator {
                 let file_stem = path.file_stem().unwrap().to_string_lossy().to_string();
                 if file_stem != "mod" && file_stem != "lib" && file_stem != "main" {
                     module_stack.push(file_stem);
-                }
-
-                let content = fs::read_to_string(path).unwrap_or_default();
-
-                if !content.contains("e![")
-                    && !content.contains("#[skerry_error]")
-                    && !content.contains("skerry_include!")
-                {
-                    continue;
                 }
 
                 let syntax_tree = match syn::parse_file(&content) {
@@ -332,6 +345,11 @@ impl SkerryGenerator {
 
         let Some(module) = module else {
             panic!("skerry_include!(); never called!");
+        };
+
+        let module = match self.module_override {
+            Some(m) => m,
+            None => module,
         };
 
         let mut all_defs = Vec::new();
