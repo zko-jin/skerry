@@ -1,11 +1,20 @@
 use std::{
     env,
     fs,
+    io::Write,
     path::PathBuf,
+    time::SystemTime,
 };
 
-use hashbrown::HashMap;
+use hashbrown::{
+    HashMap,
+    hash_map::Entry,
+};
 use quote::ToTokens;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use syn::{
     GenericArgument,
     Item,
@@ -21,23 +30,48 @@ use syn::{
 };
 use topological_sort::TopologicalSort;
 
-struct CompositeError {
+#[derive(Clone, Serialize, Deserialize)]
+struct CompositeType {
     types: Vec<String>,
     composites: Vec<String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+enum TypeDefinitionType {
+    Simple { raw: String },
+    Composite(CompositeType),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct TypeDefinition {
     file: String,
     line: usize,
+    ty: TypeDefinitionType,
 }
 
-enum ErrorDefinition {
-    Simple {
-        raw: String,
-        file: String,
-        line: usize,
-    },
-    Composite(CompositeError),
+impl TypeDefinition {
+    pub fn file(&self) -> &str {
+        &self.file
+    }
+
+    pub fn simple(file: String, line: usize, raw: String) -> Self {
+        Self {
+            file,
+            line,
+            ty: TypeDefinitionType::Simple { raw },
+        }
+    }
+
+    pub fn composite(file: String, line: usize, composite: CompositeType) -> Self {
+        Self {
+            file,
+            line,
+            ty: TypeDefinitionType::Composite(composite),
+        }
+    }
 }
 
-enum DefFailCause {
+enum DefinitionErrorCause {
     NameConflict {
         name: String,
     },
@@ -49,19 +83,72 @@ enum DefFailCause {
     NotInResult,
 }
 
-struct ErrorDefinitionFail {
-    cause: DefFailCause,
+impl DefinitionErrorCause {
+    pub fn to_msg(self) -> String {
+        match self {
+            DefinitionErrorCause::NameConflict { name } => {
+                format!("Conflicting name definition: {}", name)
+            }
+            DefinitionErrorCause::WrongErrorExpansion {
+                missing_errors,
+                remove_asterisk,
+                add_asterisk,
+            } => {
+                let mut lines = Vec::new();
+
+                if !missing_errors.is_empty() {
+                    lines.push(format!(
+                        "The following types were not found: [{}]",
+                        missing_errors.join(", ")
+                    ));
+                }
+
+                if !add_asterisk.is_empty() {
+                    lines.push(format!(
+                        "Add '*' prefix to composite errors: [{}]",
+                        add_asterisk.join(", ")
+                    ));
+                }
+
+                if !remove_asterisk.is_empty() {
+                    lines.push(format!(
+                        "Remove the '*' on plain errors: [{}]",
+                        remove_asterisk.join(", ")
+                    ));
+                }
+
+                lines.join("\n")
+            }
+            DefinitionErrorCause::NotInResult => "e![] can only be used inside Result".to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct TypeDefinitionError {
+    msg: String,
     file: String,
     line: usize,
 }
 
+impl TypeDefinitionError {
+    pub fn new(cause: DefinitionErrorCause, file: String, line: usize) -> Self {
+        Self {
+            msg: cause.to_msg(),
+            file,
+            line,
+        }
+    }
+}
+
 struct SkerryScanner<'a> {
     file_path: &'a str,
-    type_definitions: &'a mut HashMap<String, ErrorDefinition>,
-    errors: &'a mut Vec<ErrorDefinitionFail>,
+    type_definitions: &'a mut HashMap<String, TypeDefinition>,
+    errors: &'a mut Vec<TypeDefinitionError>,
     prefix_stack: Vec<String>,
     module_stack: Vec<String>,
     module: &'a mut Option<String>,
+    generator: &'a mut SkerryGenerator,
 }
 
 impl<'a> SkerryScanner<'a> {
@@ -89,27 +176,26 @@ impl<'a> SkerryScanner<'a> {
                     .type_definitions
                     .try_insert(
                         composite_name.clone(),
-                        ErrorDefinition::Composite(CompositeError {
-                            types,
-                            composites,
-                            file: self.file_path.to_string(),
-                            line: ty.span().start().line,
-                        }),
+                        TypeDefinition::composite(
+                            self.file_path.to_string(),
+                            ty.span().start().line,
+                            CompositeType { types, composites },
+                        ),
                     )
                     .is_err()
                 {
-                    self.errors.push(ErrorDefinitionFail {
-                        cause: DefFailCause::NameConflict {
+                    self.errors.push(TypeDefinitionError::new(
+                        DefinitionErrorCause::NameConflict {
                             name: composite_name,
                         },
-                        file: self.file_path.to_string(),
-                        line: ty.span().start().line,
-                    });
+                        self.file_path.to_string(),
+                        ty.span().start().line,
+                    ));
                 }
             } else {
                 // If it's a function but doesn't have the skerry macro in Result
-                self.errors.push(ErrorDefinitionFail {
-                    cause: DefFailCause::NotInResult,
+                self.errors.push(TypeDefinitionError {
+                    msg: DefinitionErrorCause::NotInResult.to_msg(),
                     file: self.file_path.to_string(),
                     line: ty.span().start().line,
                 });
@@ -144,6 +230,12 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
                         panic!("skerry_include!() called twice.");
                     }
                     *self.module = Some(self.module_stack.join("::"));
+
+                    let file = self.generator.get_new_cache(&self.file_path);
+                    let cache_line =
+                        postcard::to_allocvec(&CacheLine::Module(self.module.clone().unwrap()))
+                            .unwrap();
+                    file.write(&cache_line).unwrap();
                 }
                 visit::visit_item(self, i);
                 return;
@@ -166,21 +258,21 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
                 .type_definitions
                 .try_insert(
                     ident.to_string(),
-                    ErrorDefinition::Simple {
+                    TypeDefinition::simple(
+                        self.file_path.to_string(),
+                        attr.span().start().line,
                         raw,
-                        file: self.file_path.to_string(),
-                        line: attr.span().start().line,
-                    },
+                    ),
                 )
                 .is_err()
             {
-                self.errors.push(ErrorDefinitionFail {
-                    cause: DefFailCause::NameConflict {
+                self.errors.push(TypeDefinitionError::new(
+                    DefinitionErrorCause::NameConflict {
                         name: ident.to_string(),
                     },
-                    file: self.file_path.to_string(),
-                    line: attr.span().start().line,
-                });
+                    self.file_path.to_string(),
+                    attr.span().start().line,
+                ));
             }
         }
 
@@ -271,14 +363,30 @@ fn extract_skerry_macro_types(ty: &Type) -> Option<(Vec<String>, Vec<String>)> {
     None
 }
 
+#[derive(Serialize, Deserialize)]
+enum CacheLine {
+    Module(String),
+    Definition(String, TypeDefinition),
+    Errors(TypeDefinitionError),
+}
+
 pub struct SkerryGenerator {
     module_override: Option<String>,
+    cache_files: HashMap<String, fs::File>,
+    out_dir: PathBuf,
+    new_cache_dir: PathBuf,
 }
 
 impl SkerryGenerator {
     pub fn new() -> Self {
+        let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("skerry");
+        let new_cache_dir = out_dir.join("new_cache");
+
         SkerryGenerator {
             module_override: None,
+            cache_files: HashMap::new(),
+            out_dir,
+            new_cache_dir,
         }
     }
 
@@ -290,13 +398,64 @@ impl SkerryGenerator {
         self
     }
 
-    pub fn generate(self) {
+    fn touch_stamp(path: &std::path::Path) {
+        fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(path)
+            .ok();
+    }
+
+    fn needs_processing(
+        file_path: &std::path::Path,
+        stamp_mtime: &std::io::Result<SystemTime>,
+    ) -> bool {
+        let stamp_mtime = match stamp_mtime {
+            Ok(mtime) => mtime,
+            Err(_) => return true,
+        };
+
+        let file_mtime = match fs::metadata(file_path).and_then(|m| m.modified()) {
+            Ok(mtime) => mtime,
+            Err(_) => return true,
+        };
+
+        file_mtime > *stamp_mtime
+    }
+
+    fn get_new_cache(&mut self, path_str: &str) -> &mut fs::File {
+        match self.cache_files.entry(path_str.to_string()) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => {
+                let path = self
+                    .new_cache_dir
+                    .join(path_str)
+                    .with_added_extension("cache");
+
+                fs::create_dir_all(path.parent().unwrap())
+                    .expect("Could not create cache directory");
+
+                let file = fs::File::create(&path).expect("Could not create cache file");
+
+                entry.insert(file)
+            }
+        }
+    }
+
+    pub fn generate(mut self) {
         println!("cargo:rerun-if-changed=src");
-        let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("skerry");
-        fs::create_dir(&out_dir).unwrap();
+        let old_cache_dir = self.out_dir.join("cache");
+
+        fs::create_dir_all(&self.out_dir).unwrap();
+        fs::create_dir_all(&old_cache_dir).unwrap();
+        fs::create_dir_all(&self.new_cache_dir).unwrap();
+
+        let stamp_path = self.out_dir.join("skerry.stamp");
+
+        let stamp_mtime = fs::metadata(&stamp_path).and_then(|m| m.modified());
 
         let mut type_definitions = HashMap::new();
-        let mut failures: Vec<ErrorDefinitionFail> = Vec::new();
+        let mut failures: Vec<TypeDefinitionError> = Vec::new();
         let mut module = None;
 
         for entry in walkdir::WalkDir::new("src")
@@ -304,8 +463,35 @@ impl SkerryGenerator {
             .filter_map(|e| e.ok())
         {
             let path = entry.path();
+            let path_str = path.to_str().unwrap_or("unknown");
 
             if path.extension().map_or(false, |ext| ext == "rs") {
+                if !Self::needs_processing(path, &stamp_mtime) {
+                    if let Ok(bytes) = fs::read(old_cache_dir.join(path).with_added_extension("cache")) {
+                        let mut bytes = bytes.as_slice();
+                        let mut cache_line: CacheLine;
+                        loop {
+                            if bytes.len() == 0 {
+                                break;
+                            }
+
+                            (cache_line, bytes) = postcard::take_from_bytes(&bytes).unwrap();
+                            match cache_line {
+                                CacheLine::Module(s) => {
+                                    module = Some(s);
+                                }
+                                CacheLine::Definition(name, def) => {
+                                    type_definitions.insert(name, def);
+                                }
+                                CacheLine::Errors(def) => {
+                                    failures.push(def);
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                }
+
                 let content = fs::read_to_string(path).unwrap_or_default();
 
                 if !content.contains("e![")
@@ -331,12 +517,13 @@ impl SkerryGenerator {
                 };
 
                 let mut scanner = SkerryScanner {
-                    file_path: path.to_str().unwrap_or("unknown"),
+                    file_path: path_str,
                     type_definitions: &mut type_definitions,
                     errors: &mut failures,
                     prefix_stack: Vec::new(),
                     module_stack,
                     module: &mut module,
+                    generator: &mut self,
                 };
 
                 visit::visit_file(&mut scanner, &syntax_tree);
@@ -347,10 +534,7 @@ impl SkerryGenerator {
             panic!("skerry_include!(); never called!");
         };
 
-        let module = match self.module_override {
-            Some(m) => m,
-            None => module,
-        };
+        let module = self.module_override.take().unwrap_or(module);
 
         let mut all_defs = Vec::new();
         let mut all_arms = Vec::new();
@@ -359,8 +543,19 @@ impl SkerryGenerator {
 
         // Validate and generate errors
         for (name, def) in &type_definitions {
-            match def {
-                ErrorDefinition::Simple { raw, file, line } => {
+            {
+                let file = self.get_new_cache(def.file());
+
+                let cache_line =
+                    postcard::to_allocvec(&CacheLine::Definition(name.clone(), def.clone()))
+                        .unwrap();
+                file.write(&cache_line).unwrap();
+            }
+
+            let TypeDefinition { file, line, ty } = def;
+
+            match ty {
+                TypeDefinitionType::Simple { raw } => {
                     all_arms.push(format!(
                         "    ({:?}, {}) => {{ #[allow(unused_imports)]\nuse {}::{}; }};",
                         file, line, module, name
@@ -368,12 +563,7 @@ impl SkerryGenerator {
 
                     plain_defs.push_str(&raw);
                 }
-                ErrorDefinition::Composite(CompositeError {
-                    types,
-                    composites,
-                    file,
-                    line,
-                }) => {
+                TypeDefinitionType::Composite(CompositeType { types, composites }) => {
                     let mut missing_errors = vec![];
                     let mut remove_asterisk = vec![];
                     let mut add_asterisk = vec![];
@@ -381,7 +571,7 @@ impl SkerryGenerator {
                     // Checking for errors
                     for plain_type in types {
                         if let Some(t) = type_definitions.get(plain_type) {
-                            if let ErrorDefinition::Composite { .. } = t {
+                            if let TypeDefinitionType::Composite { .. } = t.ty {
                                 add_asterisk.push(plain_type.clone());
                             }
                         } else {
@@ -390,7 +580,7 @@ impl SkerryGenerator {
                     }
                     for composite in composites {
                         if let Some(t) = type_definitions.get(composite) {
-                            if let ErrorDefinition::Simple { .. } = t {
+                            if let TypeDefinitionType::Simple { .. } = t.ty {
                                 remove_asterisk.push(composite.clone());
                             }
                         } else {
@@ -402,15 +592,15 @@ impl SkerryGenerator {
                         && remove_asterisk.is_empty()
                         && add_asterisk.is_empty())
                     {
-                        failures.push(ErrorDefinitionFail {
-                            cause: DefFailCause::WrongErrorExpansion {
+                        failures.push(TypeDefinitionError::new(
+                            DefinitionErrorCause::WrongErrorExpansion {
                                 missing_errors,
                                 remove_asterisk,
                                 add_asterisk,
                             },
-                            file: file.clone(),
-                            line: *line,
-                        });
+                            file.clone(),
+                            *line,
+                        ));
                         continue;
                     }
 
@@ -438,13 +628,15 @@ impl SkerryGenerator {
 
         // Cycle detected
         if !ts.is_empty() {
+            // TODO: Return a better error, probably by expanding the macro at
+            // the e![] locations
             panic!("Circular dependency detected in error definitions!");
         }
 
         for name in sorted_order.into_iter() {
-            if let Some(ErrorDefinition::Composite(CompositeError {
+            if let Some(TypeDefinitionType::Composite(CompositeType {
                 types, composites, ..
-            })) = type_definitions.get(&name)
+            })) = type_definitions.get(&name).and_then(|t| Some(&t.ty))
             {
                 let mut all_types = types.clone();
                 let asterisked = composites.iter().map(|s| format!("*{}", s));
@@ -458,48 +650,19 @@ impl SkerryGenerator {
         }
 
         for error in failures {
-            let error_message = match error.cause {
-                DefFailCause::NameConflict { name } => {
-                    format!("Conflicting name definition: {}", name)
-                }
-                DefFailCause::WrongErrorExpansion {
-                    missing_errors,
-                    remove_asterisk,
-                    add_asterisk,
-                } => {
-                    let mut lines = Vec::new();
+            {
+                let file = self.get_new_cache(&error.file);
 
-                    if !missing_errors.is_empty() {
-                        lines.push(format!(
-                            "The following types were not found: [{}]",
-                            missing_errors.join(", ")
-                        ));
-                    }
+                let cache_line = postcard::to_allocvec(&CacheLine::Errors(error.clone())).unwrap();
 
-                    if !add_asterisk.is_empty() {
-                        lines.push(format!(
-                            "Add '*' prefix to composite errors: [{}]",
-                            add_asterisk.join(", ")
-                        ));
-                    }
-
-                    if !remove_asterisk.is_empty() {
-                        lines.push(format!(
-                            "Remove the '*' on plain errors: [{}]",
-                            remove_asterisk.join(", ")
-                        ));
-                    }
-
-                    lines.join("\n")
-                }
-                DefFailCause::NotInResult => "e![] can only be used inside Result".to_string(),
-            };
+                file.write(&cache_line).unwrap();
+            }
 
             all_arms.push(format!(
                 "    ({file:?}, {line}) => {{ compile_error!(\"{file}:{line} - {msg}\") }};",
                 file = error.file,
                 line = error.line,
-                msg = error_message
+                msg = error.msg
             ));
         }
 
@@ -515,6 +678,9 @@ impl SkerryGenerator {
                 arms = all_arms.join("\n")
             );
 
-        fs::write(out_dir.join("skerry_gen.rs"), output).unwrap();
+        fs::write(self.out_dir.join("skerry_gen.rs"), output).unwrap();
+        fs::remove_dir_all(&old_cache_dir).unwrap();
+        fs::rename(self.new_cache_dir, old_cache_dir).unwrap();
+        Self::touch_stamp(&stamp_path);
     }
 }
