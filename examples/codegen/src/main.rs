@@ -22,7 +22,14 @@ pub struct ErrC {
     inner: u32,
 }
 
-fn my_fn_1() -> Result<(), e![ErrA, ErrB]> {
+pub struct OuterError;
+
+#[skerry_error]
+pub struct Outer(crate::OuterError);
+
+fn my_fn_1() -> Result<(), e![ErrA, ErrB, Outer]> {
+    let r: Result<(), OuterError> = Err(OuterError);
+    // r?;
     Ok(())
 }
 

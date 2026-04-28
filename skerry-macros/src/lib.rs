@@ -38,7 +38,6 @@ use crate::internal::skerry_fn::{
 };
 
 mod internal {
-    pub mod impl_converts;
     pub mod skerry_fn;
     pub mod skerry_impl;
     pub mod skerry_mod;
@@ -71,11 +70,6 @@ pub fn skerry_error(_attr: TokenStream, _item: TokenStream) -> TokenStream {
         skerry_invoke!{ #short_path, #line_lit }
     }
     .into()
-}
-
-#[proc_macro]
-pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
-    crate::internal::impl_converts::impl_converts(input)
 }
 
 /// An attribute macro to automate function-specific error handling.
@@ -242,6 +236,8 @@ impl Parse for Input {
 pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
     let Input { ty, errors } = parse_macro_input!(input as Input);
 
+    let priv_module = format_ident!("__skerry_private_{}", ty);
+
     let mut seen = HashSet::new();
     let mut deduped = Vec::new();
 
@@ -258,23 +254,6 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
         .collect();
 
     let macro_ident = format_ident!("{}_errors", format_snake_case(&ty.to_string()));
-
-    cfg_if! {
-        if #[cfg(feature = "custom-result")] {
-            let features =
-                quote! {
-                    impl IntoSkerryGlobal for #ty {
-                        type Error = #ty;
-
-                        fn into_global_error(self) -> GlobalErrors<Self::Error> {
-                            self.into()
-                        }
-                    }
-                };
-        } else {
-            let features = quote! {};
-        }
-    }
 
     let not_trait = format_ident!("Not{}", ty);
 
@@ -301,17 +280,18 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
                 #variants(#deduped),
             )*
         }
-        pub auto trait #not_trait {}
-        impl !#not_trait for #ty {}
 
-        #features
+        mod #priv_module {
+            pub auto trait #not_trait {}
+            impl !#not_trait for super::#ty {}
+        }
 
         #(
             impl skerry::skerry_internals::Contains<#variants> for #ty {}
         )*
         impl<T: #(skerry::skerry_internals::Contains<#variants>)+*> skerry::skerry_internals::IsSupersetOf<T> for #ty {}
 
-        impl<E: Into<GlobalErrors<E>> + skerry::skerry_internals::IsSubsetOf<#ty> + #not_trait> From<E> for #ty
+        impl<E: Into<GlobalErrors<E>> + skerry::skerry_internals::IsSubsetOf<#ty> + #priv_module::#not_trait> From<E> for #ty
         {
             fn from(val: E) -> #ty {
                 match val.into() {
@@ -324,6 +304,13 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
                 }
             }
         }
+        // #(
+        //     impl<T: Into<#variants>> From<T> for #ty {
+        //         fn from(val: T) -> #ty {
+        //             #ty::#variants(val.into())
+        //         }
+        //     }
+        // )*
 
         impl From<#ty> for GlobalErrors<#ty> {
             fn from(val: #ty) -> GlobalErrors<#ty> {

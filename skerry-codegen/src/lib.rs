@@ -10,7 +10,11 @@ use hashbrown::{
     HashMap,
     hash_map::Entry,
 };
-use quote::ToTokens;
+use quote::{
+    ToTokens,
+    format_ident,
+    quote,
+};
 use serde::{
     Deserialize,
     Serialize,
@@ -457,6 +461,7 @@ impl SkerryGenerator {
         let mut type_definitions = HashMap::new();
         let mut failures: Vec<TypeDefinitionError> = Vec::new();
         let mut module = None;
+        let mut expansions: HashMap<String, Vec<syn::Ident>> = HashMap::new();
 
         for entry in walkdir::WalkDir::new("src")
             .into_iter()
@@ -467,7 +472,9 @@ impl SkerryGenerator {
 
             if path.extension().map_or(false, |ext| ext == "rs") {
                 if !Self::needs_processing(path, &stamp_mtime) {
-                    if let Ok(bytes) = fs::read(old_cache_dir.join(path).with_added_extension("cache")) {
+                    if let Ok(bytes) =
+                        fs::read(old_cache_dir.join(path).with_added_extension("cache"))
+                    {
                         let mut bytes = bytes.as_slice();
                         let mut cache_line: CacheLine;
                         loop {
@@ -536,10 +543,11 @@ impl SkerryGenerator {
 
         let module = self.module_override.take().unwrap_or(module);
 
-        let mut all_defs = Vec::new();
+        let mut all_defs: Vec<String> = Vec::new();
         let mut all_arms = Vec::new();
         let mut ts = TopologicalSort::<String>::new();
         let mut plain_defs = String::new();
+        let mut privates = String::new();
 
         // Validate and generate errors
         for (name, def) in &type_definitions {
@@ -578,6 +586,7 @@ impl SkerryGenerator {
                             missing_errors.push(plain_type.clone());
                         }
                     }
+
                     for composite in composites {
                         if let Some(t) = type_definitions.get(composite) {
                             if let TypeDefinitionType::Simple { .. } = t.ty {
@@ -603,6 +612,11 @@ impl SkerryGenerator {
                         ));
                         continue;
                     }
+
+                    privates.push_str(&format!(
+                        "pub auto trait Not{ty} {{}}\nimpl !Not{ty} for super::{ty} {{}}",
+                        ty = name
+                    ));
 
                     // Add the node to the sorter
                     ts.insert(name.clone());
@@ -638,14 +652,70 @@ impl SkerryGenerator {
                 types, composites, ..
             })) = type_definitions.get(&name).and_then(|t| Some(&t.ty))
             {
-                let mut all_types = types.clone();
-                let asterisked = composites.iter().map(|s| format!("*{}", s));
-                all_types.extend(asterisked);
-                all_defs.push(format!(
-                    "skerry::define_error!({}, [{}]);",
-                    &name,
-                    all_types.join(",")
-                ));
+                let mut all_types: Vec<syn::Ident> =
+                    types.iter().map(|v| format_ident!("{}", v)).collect();
+
+                for composite in composites {
+                    all_types.extend(
+                        expansions
+                            .get(composite)
+                            .unwrap()
+                            .iter()
+                            .map(|v| format_ident!("{}", v)),
+                    );
+                }
+                // TODO: This entire section is horrible, fix this shit later
+                all_types.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
+                all_types.dedup_by(|a, b| a.to_string() == b.to_string());
+
+                let ty = format_ident!("{}", name);
+                let not_trait = format_ident!("Not{}", name);
+
+                all_defs.push(quote! {
+                    pub enum #ty {
+                        #(
+                            #all_types(#all_types),
+                        )*
+                    }
+
+                    #(
+                        impl skerry::skerry_internals::Contains<#all_types> for #ty{}
+                    )*
+                    impl<T: #(skerry::skerry_internals::Contains<#all_types>)+*> skerry::skerry_internals::IsSupersetOf<T> for #ty {}
+
+                    impl<E: Into<GlobalErrors<E>> + skerry::skerry_internals::IsSubsetOf<#ty> + __skerry_private::#not_trait> From<E> for #ty
+                    {
+                        fn from(val: E) -> #ty {
+                            match val.into() {
+                                #(
+                                    GlobalErrors::#all_types(v) => {
+                                        #ty::#all_types(v)
+                                    }
+                                )*
+                                _ => unreachable!(),
+                            }
+                        }
+                    }
+                    // #(
+                    //     impl<T: Into<#variants>> From<T> for #ty {
+                    //         fn from(val: T) -> #ty {
+                    //             #ty::#variants(val.into())
+                    //         }
+                    //     }
+                    // )*
+
+                    impl From<#ty> for GlobalErrors<#ty> {
+                        fn from(val: #ty) -> GlobalErrors<#ty> {
+                            match val {
+                                #(
+                                    #ty::#all_types(v) => GlobalErrors::#all_types(v),
+                                )*
+                            }
+                        }
+                    }
+                }.to_string());
+
+                expansions.insert(name, all_types);
             }
         }
 
@@ -670,12 +740,20 @@ impl SkerryGenerator {
         let output = format!(
                 "{}\n#[skerry::skerry_mod]\nmod auto {{
                 {plain_defs}
-            }}
-            {defs}\n\n#[macro_export]\nmacro_rules! skerry_invoke {{\n{arms}\n    ($file:expr, $line:expr) => {{ compile_error!(concat!(\"Skerry Sync Error: No macro generated for \", $file, \":\", $line)); }};\n}}",
+            }}\n
+            mod __skerry_private {{
+                {privates}
+            }}\n
+            {defs} \
+            \n\n \
+            #[macro_export]\nmacro_rules! skerry_invoke {{\n{arms}\n($file:expr, $line:expr) => \
+            {{ compile_error!(concat!(\"Skerry Sync Error: No macro generated for \", $file, \":\", \
+            $line)); }};\n}}",
                 header,
                 plain_defs = plain_defs,
                 defs = all_defs.join("\n"),
-                arms = all_arms.join("\n")
+                arms = all_arms.join("\n"),
+                privates = privates
             );
 
         fs::write(self.out_dir.join("skerry_gen.rs"), output).unwrap();

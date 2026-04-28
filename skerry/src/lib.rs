@@ -366,15 +366,7 @@
 //! Skerry uses a custom trait system (`MissingConvert`) to verify error bounds at
 //! compile-time. If you try to use `?` on a function whose errors are not represented
 //! in your current return tuple, the compiler will refuse to build.
-#![cfg_attr(
-    feature = "custom-result",
-    allow(unused_features),
-    // feature(try_trait_v2),
-    // feature(custom_inner_attributes),
-    // feature(proc_macro_hygiene)
-)]
 
-mod helpers;
 mod macros;
 mod traits;
 pub use skerry_macros::{
@@ -405,7 +397,6 @@ pub mod skerry_internals {
     pub use skerry_macros::*;
 
     pub use crate::{
-        helpers::*,
         macros::*,
         traits::*,
     };
