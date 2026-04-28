@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 
-use cfg_if::cfg_if;
 use proc_macro::TokenStream;
 use quote::{
     format_ident,
@@ -55,7 +54,9 @@ pub fn e(input: TokenStream) -> TokenStream {
 
 #[cfg(feature = "codegen")]
 #[proc_macro_attribute]
-pub fn skerry_error(_attr: TokenStream, _item: TokenStream) -> TokenStream {
+pub fn skerry_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    use proc_macro2::TokenStream;
+
     let span = proc_macro2::Span::call_site();
     let line = span.start().line;
     let line_lit = proc_macro2::Literal::usize_unsuffixed(line);
@@ -66,8 +67,11 @@ pub fn skerry_error(_attr: TokenStream, _item: TokenStream) -> TokenStream {
         &file
     };
 
+    let tokens: TokenStream = item.into();
+
     quote! {
         skerry_invoke!{ #short_path, #line_lit }
+        #tokens
     }
     .into()
 }
@@ -304,13 +308,6 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
                 }
             }
         }
-        // #(
-        //     impl<T: Into<#variants>> From<T> for #ty {
-        //         fn from(val: T) -> #ty {
-        //             #ty::#variants(val.into())
-        //         }
-        //     }
-        // )*
 
         impl From<#ty> for GlobalErrors<#ty> {
             fn from(val: #ty) -> GlobalErrors<#ty> {

@@ -42,7 +42,7 @@ struct CompositeType {
 
 #[derive(Clone, Serialize, Deserialize)]
 enum TypeDefinitionType {
-    Simple { raw: String },
+    Simple { mod_path: String },
     Composite(CompositeType),
 }
 
@@ -58,11 +58,11 @@ impl TypeDefinition {
         &self.file
     }
 
-    pub fn simple(file: String, line: usize, raw: String) -> Self {
+    pub fn simple(file: String, line: usize, mod_path: String) -> Self {
         Self {
             file,
             line,
-            ty: TypeDefinitionType::Simple { raw },
+            ty: TypeDefinitionType::Simple { mod_path },
         }
     }
 
@@ -215,13 +215,13 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
                 let ident = &s.ident;
                 let mut s = s.clone();
                 let attrs = std::mem::replace(&mut s.attrs, vec![]);
-                (attrs, ident, s.to_token_stream().to_string())
+                (attrs, ident)
             }
             Item::Enum(e) => {
                 let ident = &e.ident;
                 let mut e = e.clone();
                 let attrs = std::mem::replace(&mut e.attrs, vec![]);
-                (attrs, ident, e.to_token_stream().to_string())
+                (attrs, ident)
             }
             Item::Macro(m) => {
                 if m.mac
@@ -250,7 +250,7 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
             }
         };
 
-        let (attrs, ident, raw) = attrs;
+        let (attrs, ident) = attrs;
         if let Some(attr) = attrs.iter().find_map(|attr| {
             if attr.path().is_ident("skerry_error") {
                 Some(attr)
@@ -265,7 +265,7 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
                     TypeDefinition::simple(
                         self.file_path.to_string(),
                         attr.span().start().line,
-                        raw,
+                        self.module_stack.join("::"),
                     ),
                 )
                 .is_err()
@@ -381,6 +381,10 @@ pub struct SkerryGenerator {
     new_cache_dir: PathBuf,
 }
 
+pub enum SkerryCodeGenError {
+    MissingInclude,
+}
+
 impl SkerryGenerator {
     pub fn new() -> Self {
         let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("skerry");
@@ -446,7 +450,7 @@ impl SkerryGenerator {
         }
     }
 
-    pub fn generate(mut self) {
+    pub fn generate(mut self) -> Result<(), SkerryCodeGenError> {
         println!("cargo:rerun-if-changed=src");
         let old_cache_dir = self.out_dir.join("cache");
 
@@ -538,15 +542,16 @@ impl SkerryGenerator {
         }
 
         let Some(module) = module else {
-            panic!("skerry_include!(); never called!");
+            return Err(SkerryCodeGenError::MissingInclude);
+            // panic!("skerry_include!(); never called!");
         };
 
         let module = self.module_override.take().unwrap_or(module);
 
         let mut all_defs: Vec<String> = Vec::new();
         let mut all_arms = Vec::new();
+        let mut global_variants = String::new();
         let mut ts = TopologicalSort::<String>::new();
-        let mut plain_defs = String::new();
         let mut privates = String::new();
 
         // Validate and generate errors
@@ -563,13 +568,14 @@ impl SkerryGenerator {
             let TypeDefinition { file, line, ty } = def;
 
             match ty {
-                TypeDefinitionType::Simple { raw } => {
-                    all_arms.push(format!(
-                        "    ({:?}, {}) => {{ #[allow(unused_imports)]\nuse {}::{}; }};",
-                        file, line, module, name
-                    ));
+                TypeDefinitionType::Simple { mod_path } => {
+                    all_arms.push(format!("({:?}, {}) => {{}};", file, line));
 
-                    plain_defs.push_str(&raw);
+                    global_variants += &format!(
+                        "{name}({mod_path}::{name}),\n",
+                        name = name,
+                        mod_path = mod_path
+                    );
                 }
                 TypeDefinitionType::Composite(CompositeType { types, composites }) => {
                     let mut missing_errors = vec![];
@@ -674,14 +680,14 @@ impl SkerryGenerator {
                 all_defs.push(quote! {
                     pub enum #ty {
                         #(
-                            #all_types(#all_types),
+                            #all_types(crate::#all_types),
                         )*
                     }
 
                     #(
-                        impl skerry::skerry_internals::Contains<#all_types> for #ty{}
+                        impl skerry::skerry_internals::Contains<crate::#all_types> for #ty{}
                     )*
-                    impl<T: #(skerry::skerry_internals::Contains<#all_types>)+*> skerry::skerry_internals::IsSupersetOf<T> for #ty {}
+                    impl<T: #(skerry::skerry_internals::Contains<crate::#all_types>)+*> skerry::skerry_internals::IsSupersetOf<T> for #ty {}
 
                     impl<E: Into<GlobalErrors<E>> + skerry::skerry_internals::IsSubsetOf<#ty> + __skerry_private::#not_trait> From<E> for #ty
                     {
@@ -696,13 +702,13 @@ impl SkerryGenerator {
                             }
                         }
                     }
-                    // #(
-                    //     impl<T: Into<#variants>> From<T> for #ty {
-                    //         fn from(val: T) -> #ty {
-                    //             #ty::#variants(val.into())
-                    //         }
-                    //     }
-                    // )*
+                    #(
+                        impl From<crate::#all_types> for #ty {
+                            fn from(val: crate::#all_types) -> #ty {
+                                #ty::#all_types(val)
+                            }
+                        }
+                    )*
 
                     impl From<#ty> for GlobalErrors<#ty> {
                         fn from(val: #ty) -> GlobalErrors<#ty> {
@@ -738,9 +744,11 @@ impl SkerryGenerator {
 
         let header = "/* GENERATED BY SKERRY CODEGEN */\n";
         let output = format!(
-                "{}\n#[skerry::skerry_mod]\nmod auto {{
-                {plain_defs}
-            }}\n
+                "{}\n
+                pub enum GlobalErrors<E> {{
+                    {global_variants}_Phantom(std::marker::PhantomData<E>)
+                }}
+                \n
             mod __skerry_private {{
                 {privates}
             }}\n
@@ -750,7 +758,7 @@ impl SkerryGenerator {
             {{ compile_error!(concat!(\"Skerry Sync Error: No macro generated for \", $file, \":\", \
             $line)); }};\n}}",
                 header,
-                plain_defs = plain_defs,
+                global_variants = global_variants,
                 defs = all_defs.join("\n"),
                 arms = all_arms.join("\n"),
                 privates = privates
@@ -760,5 +768,6 @@ impl SkerryGenerator {
         fs::remove_dir_all(&old_cache_dir).unwrap();
         fs::rename(self.new_cache_dir, old_cache_dir).unwrap();
         Self::touch_stamp(&stamp_path);
+        Ok(())
     }
 }
