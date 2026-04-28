@@ -151,37 +151,14 @@ pub fn skerry_mod(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         #(#from_impls)*
 
-        pub enum GlobalErrors<E: skerry::skerry_internals::SkerryError> {
+        pub enum GlobalErrors<E> {
             #(
                 #struct_names(#struct_names),
             )*
             _PHANTOM(std::marker::PhantomData<E>)
         }
 
-        #[macro_export]
-        macro_rules! skerry_impl_missing_errors {
-            ($ty:ty, [$($v:ident),*], no_expand) => {
-                skerry::skerry_internals::impl_missing_converts!(
-                    $ty,
-                    [#(#struct_names),*],
-                    [$($v),*],
-                    no_expand
-                );
-            };
-            ($ty:ty, [$($v:ident),*]) => {
-                skerry::skerry_internals::impl_missing_converts!(
-                    $ty,
-                    [#(#struct_names),*],
-                    [$($v),*]
-                );
-            };
-        }
-
         #(
-            impl skerry::skerry_internals::SkerryError for #struct_names {}
-
-            skerry_impl_missing_errors!(#struct_names, [#struct_names], no_expand);
-
             impl<I: Into<#struct_names>> From<I> for GlobalErrors<#struct_names> {
                 fn from(val: I) -> Self {
                     Self::#struct_names(val.into())

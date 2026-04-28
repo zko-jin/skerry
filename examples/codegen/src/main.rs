@@ -1,4 +1,5 @@
-#![feature(try_trait_v2)]
+#![feature(negative_impls)]
+#![feature(auto_traits)]
 
 use skerry::{
     e,
@@ -21,17 +22,18 @@ pub struct ErrC {
     inner: u32,
 }
 
-fn my_fn_1() -> errors::Result<(), e![ErrA, ErrB]> {
-    errors::Ok(())
+fn my_fn_1() -> Result<(), e![ErrA, ErrB]> {
+    Ok(())
 }
 
-pub fn my_fn_2() -> errors::Result<(), e![ErrA, *MyFn1Error]> {
+pub fn my_fn_2() -> Result<(), e![ErrA, *MyFn1Error]> {
     my_fn_1()?;
-    errors::Ok(())
+    Ok(())
 }
 
 trait TestTrait {
-    fn my_fn_1() -> errors::Result<(), e![ErrA, ErrB, *MyFn2Error]> {
-        errors::Ok(())
+    fn my_fn_1() -> Result<(), e![ErrA, ErrB, *MyFn2Error]> {
+        my_fn_2()?;
+        Ok(())
     }
 }

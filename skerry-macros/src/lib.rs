@@ -38,7 +38,7 @@ use crate::internal::skerry_fn::{
 };
 
 mod internal {
-    pub mod impl_missing_converts;
+    pub mod impl_converts;
     pub mod skerry_fn;
     pub mod skerry_impl;
     pub mod skerry_mod;
@@ -75,7 +75,7 @@ pub fn skerry_error(_attr: TokenStream, _item: TokenStream) -> TokenStream {
 
 #[proc_macro]
 pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
-    crate::internal::impl_missing_converts::impl_missing_converts(input)
+    crate::internal::impl_converts::impl_converts(input)
 }
 
 /// An attribute macro to automate function-specific error handling.
@@ -276,6 +276,8 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
         }
     }
 
+    let not_trait = format_ident!("Not{}", ty);
+
     let expanded = quote! {
         #[macro_export]
         macro_rules! #macro_ident {
@@ -299,10 +301,29 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
                 #variants(#deduped),
             )*
         }
+        pub auto trait #not_trait {}
+        impl !#not_trait for #ty {}
 
         #features
 
-        skerry_impl_missing_errors!(#ty, [#(#variants),*]);
+        #(
+            impl skerry::skerry_internals::Contains<#variants> for #ty {}
+        )*
+        impl<T: #(skerry::skerry_internals::Contains<#variants>)+*> skerry::skerry_internals::IsSupersetOf<T> for #ty {}
+
+        impl<E: Into<GlobalErrors<E>> + skerry::skerry_internals::IsSubsetOf<#ty> + #not_trait> From<E> for #ty
+        {
+            fn from(val: E) -> #ty {
+                match val.into() {
+                    #(
+                        GlobalErrors::#variants(v) => {
+                            #ty::#variants(v)
+                        }
+                    )*
+                    _ => unreachable!(),
+                }
+            }
+        }
 
         impl From<#ty> for GlobalErrors<#ty> {
             fn from(val: #ty) -> GlobalErrors<#ty> {
@@ -313,8 +334,6 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
                 }
             }
         }
-
-        impl skerry::skerry_internals::SkerryError for #ty {}
     };
 
     TokenStream::from(expanded)
