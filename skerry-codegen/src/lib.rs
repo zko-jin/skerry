@@ -1,19 +1,24 @@
 use std::{
     env,
-    fs,
-    io::Write,
-    path::PathBuf,
+    fs::{
+        self,
+        File,
+    },
+    io::{
+        self,
+        BufWriter,
+        Write,
+    },
+    path::{
+        Path,
+        PathBuf,
+    },
     time::SystemTime,
 };
 
 use hashbrown::{
     HashMap,
     hash_map::Entry,
-};
-use quote::{
-    ToTokens,
-    format_ident,
-    quote,
 };
 use serde::{
     Deserialize,
@@ -385,6 +390,153 @@ pub enum SkerryCodeGenError {
     MissingInclude,
 }
 
+struct SkerryWriter {
+    writer: BufWriter<File>,
+    global_variants: BufWriter<Vec<u8>>,
+    privates: BufWriter<Vec<u8>>,
+    macro_arms: BufWriter<Vec<u8>>,
+}
+
+impl SkerryWriter {
+    pub fn new(path: &Path) -> Self {
+        let file = File::create(path.join("skerry_gen.rs")).unwrap();
+        Self {
+            writer: BufWriter::new(file),
+            global_variants: BufWriter::new(Vec::new()),
+            privates: BufWriter::new(Vec::new()),
+            macro_arms: BufWriter::new(Vec::new()),
+        }
+    }
+
+    pub fn add_variant(&mut self, module: &str, ty: &str) -> io::Result<()> {
+        write!(self.global_variants, "{ty}({module}::{ty}),")
+    }
+
+    pub fn add_define(&mut self, ty: &str, variants: &Vec<String>) -> io::Result<()> {
+        write!(self.writer, "pub enum {ty} {{")?;
+        for variant in variants {
+            write!(self.writer, "{variant}(crate::{variant}),")?;
+        }
+        write!(self.writer, "}}")?;
+
+        for variant in variants {
+            write!(
+                self.writer,
+                "impl skerry::skerry_internals::Contains<crate::{variant}> for {ty}{{}}"
+            )?;
+        }
+        write!(self.writer, "impl <T:")?;
+        for (i, t) in variants.iter().enumerate() {
+            if i > 0 {
+                write!(self.writer, "+")?;
+            }
+            write!(
+                self.writer,
+                "skerry::skerry_internals::Contains<crate::{t}>",
+            )?;
+        }
+        write!(
+            self.writer,
+            "> skerry::skerry_internals::IsSupersetOf<T> for {ty}{{}}"
+        )?;
+
+        write!(
+            self.writer,
+            "impl<E: Into<GlobalErrors<E>> + skerry::skerry_internals::IsSubsetOf<{ty}> + \
+            __skerry_private::Not{ty}> From<E> for {ty} {{fn from(val:E)->{ty}{{match val.into(){{"
+        )?;
+        for t in variants {
+            writeln!(self.writer, "GlobalErrors::{t}(v) => {ty}::{t}(v),",)?;
+        }
+        write!(self.writer, "_ => unreachable!()}}}}}}")?;
+
+        for t in variants {
+            writeln!(
+                self.writer,
+                "impl From<crate::{t}> for {ty} {{
+                    fn from(val: crate::{t}) -> {ty} {{
+                        {ty}::{t}(val)
+                    }}
+                }}",
+            )?;
+        }
+
+        writeln!(
+            self.writer,
+            "impl From<{ty}> for GlobalErrors<{ty}> {{
+                fn from(val: {ty}) -> GlobalErrors<{ty}> {{
+                    match val {{",
+        )?;
+        for t in variants {
+            writeln!(self.writer, "{ty}::{t}(v) => GlobalErrors::{t}(v),",)?;
+        }
+        writeln!(self.writer, "}}}}}}")?;
+        Ok(())
+    }
+
+    pub fn add_macro_arm_empty(&mut self, file: &str, line: usize) -> io::Result<()> {
+        write!(self.macro_arms, "({file:?}, {line}) => {{}};",)
+    }
+
+    pub fn add_macro_arm_composite(
+        &mut self,
+        file: &str,
+        line: usize,
+        module: &str,
+        ty: &str,
+    ) -> io::Result<()> {
+        write!(self.macro_arms, "({file:?}, {line}) => {{{module}::{ty}}};",)
+    }
+
+    pub fn add_macro_arm_error(&mut self, error: &TypeDefinitionError) -> io::Result<()> {
+        write!(
+            self.macro_arms,
+            "({file:?}, {line}) => {{compile_error!(\"{file}:{line} - {msg}\"}};",
+            file = error.file,
+            line = error.line,
+            msg = error.msg
+        )
+    }
+
+    pub fn add_not(&mut self, ty: &str) -> io::Result<()> {
+        write!(
+            self.privates,
+            "pub auto trait Not{ty} {{}} impl !Not{ty} for super::{ty} {{}}"
+        )
+    }
+
+    pub fn finish(self) -> io::Result<()> {
+        let SkerryWriter {
+            mut writer,
+            mut global_variants,
+            mut privates,
+            mut macro_arms,
+        } = self;
+
+        global_variants.flush()?;
+        privates.flush()?;
+        macro_arms.flush()?;
+
+        write!(writer, "pub enum GlobalErrors<E>{{")?;
+        writer.write(&global_variants.into_inner()?)?;
+        write!(writer, "_Phantom(std::marker::PhantomData<E>)}}")?;
+
+        write!(writer, "mod __skerry_private{{")?;
+        writer.write(&privates.into_inner()?)?;
+        write!(writer, "}}")?;
+
+        write!(writer, "#[macro_export]\nmacro_rules! skerry_invoke {{")?;
+        writer.write(&macro_arms.into_inner()?)?;
+        write!(
+            writer,
+            "($file:expr, $line:expr) => {{ compile_error!(concat!\
+            (\"Skerry Sync Error: No macro generated for \", $file, \":\", $line));}}}}"
+        )?;
+
+        writer.flush()
+    }
+}
+
 impl SkerryGenerator {
     pub fn new() -> Self {
         let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("skerry");
@@ -465,7 +617,7 @@ impl SkerryGenerator {
         let mut type_definitions = HashMap::new();
         let mut failures: Vec<TypeDefinitionError> = Vec::new();
         let mut module = None;
-        let mut expansions: HashMap<String, Vec<syn::Ident>> = HashMap::new();
+        let mut expansions: HashMap<String, Vec<String>> = HashMap::new();
 
         for entry in walkdir::WalkDir::new("src")
             .into_iter()
@@ -548,11 +700,8 @@ impl SkerryGenerator {
 
         let module = self.module_override.take().unwrap_or(module);
 
-        let mut all_defs: Vec<String> = Vec::new();
-        let mut all_arms = Vec::new();
-        let mut global_variants = String::new();
         let mut ts = TopologicalSort::<String>::new();
-        let mut privates = String::new();
+        let mut writer = SkerryWriter::new(&self.out_dir);
 
         // Validate and generate errors
         for (name, def) in &type_definitions {
@@ -569,13 +718,8 @@ impl SkerryGenerator {
 
             match ty {
                 TypeDefinitionType::Simple { mod_path } => {
-                    all_arms.push(format!("({:?}, {}) => {{}};", file, line));
-
-                    global_variants += &format!(
-                        "{name}({mod_path}::{name}),\n",
-                        name = name,
-                        mod_path = mod_path
-                    );
+                    writer.add_macro_arm_empty(file, *line).unwrap();
+                    writer.add_variant(mod_path, name).unwrap();
                 }
                 TypeDefinitionType::Composite(CompositeType { types, composites }) => {
                     let mut missing_errors = vec![];
@@ -619,10 +763,7 @@ impl SkerryGenerator {
                         continue;
                     }
 
-                    privates.push_str(&format!(
-                        "pub auto trait Not{ty} {{}}\nimpl !Not{ty} for super::{ty} {{}}",
-                        ty = name
-                    ));
+                    writer.add_not(name).unwrap();
 
                     // Add the node to the sorter
                     ts.insert(name.clone());
@@ -632,10 +773,9 @@ impl SkerryGenerator {
                         ts.add_dependency(dependency.clone(), name.clone());
                     }
 
-                    all_arms.push(format!(
-                        "    ({:?}, {}) => {{ {}::{} }};",
-                        file, line, module, &name
-                    ));
+                    writer
+                        .add_macro_arm_composite(file, *line, &module, name)
+                        .unwrap();
                 }
             }
         }
@@ -658,68 +798,50 @@ impl SkerryGenerator {
                 types, composites, ..
             })) = type_definitions.get(&name).and_then(|t| Some(&t.ty))
             {
-                let mut all_types: Vec<syn::Ident> =
-                    types.iter().map(|v| format_ident!("{}", v)).collect();
+                let mut all_types: Vec<String> = types.clone();
 
                 for composite in composites {
-                    all_types.extend(
-                        expansions
-                            .get(composite)
-                            .unwrap()
-                            .iter()
-                            .map(|v| format_ident!("{}", v)),
-                    );
+                    all_types.extend(expansions.get(composite).unwrap().clone());
                 }
                 // TODO: This entire section is horrible, fix this shit later
-                all_types.sort_by(|a, b| a.to_string().cmp(&b.to_string()));
-                all_types.dedup_by(|a, b| a.to_string() == b.to_string());
+                all_types.sort();
+                all_types.dedup();
 
-                let ty = format_ident!("{}", name);
-                let not_trait = format_ident!("Not{}", name);
+                writer.add_define(&name, &all_types).unwrap();
+                // all_defs.push(quote! {
+                //     impl<T: #(skerry::skerry_internals::Contains<crate::#all_types>)+*> skerry::skerry_internals::IsSupersetOf<T> for #ty {}
 
-                all_defs.push(quote! {
-                    pub enum #ty {
-                        #(
-                            #all_types(crate::#all_types),
-                        )*
-                    }
+                //     impl<E: Into<GlobalErrors<E>> + skerry::skerry_internals::IsSubsetOf<#ty> + __skerry_private::#not_trait> From<E> for #ty
+                //     {
+                //         fn from(val: E) -> #ty {
+                //             match val.into() {
+                //                 #(
+                //                     GlobalErrors::#all_types(v) => {
+                //                         #ty::#all_types(v)
+                //                     }
+                //                 )*
+                //                 _ => unreachable!(),
+                //             }
+                //         }
+                //     }
+                //     #(
+                //         impl From<crate::#all_types> for #ty {
+                //             fn from(val: crate::#all_types) -> #ty {
+                //                 #ty::#all_types(val)
+                //             }
+                //         }
+                //     )*
 
-                    #(
-                        impl skerry::skerry_internals::Contains<crate::#all_types> for #ty{}
-                    )*
-                    impl<T: #(skerry::skerry_internals::Contains<crate::#all_types>)+*> skerry::skerry_internals::IsSupersetOf<T> for #ty {}
-
-                    impl<E: Into<GlobalErrors<E>> + skerry::skerry_internals::IsSubsetOf<#ty> + __skerry_private::#not_trait> From<E> for #ty
-                    {
-                        fn from(val: E) -> #ty {
-                            match val.into() {
-                                #(
-                                    GlobalErrors::#all_types(v) => {
-                                        #ty::#all_types(v)
-                                    }
-                                )*
-                                _ => unreachable!(),
-                            }
-                        }
-                    }
-                    #(
-                        impl From<crate::#all_types> for #ty {
-                            fn from(val: crate::#all_types) -> #ty {
-                                #ty::#all_types(val)
-                            }
-                        }
-                    )*
-
-                    impl From<#ty> for GlobalErrors<#ty> {
-                        fn from(val: #ty) -> GlobalErrors<#ty> {
-                            match val {
-                                #(
-                                    #ty::#all_types(v) => GlobalErrors::#all_types(v),
-                                )*
-                            }
-                        }
-                    }
-                }.to_string());
+                //     impl From<#ty> for GlobalErrors<#ty> {
+                //         fn from(val: #ty) -> GlobalErrors<#ty> {
+                //             match val {
+                //                 #(
+                //                     #ty::#all_types(v) => GlobalErrors::#all_types(v),
+                //                 )*
+                //             }
+                //         }
+                //     }
+                // }.to_string());
 
                 expansions.insert(name, all_types);
             }
@@ -734,37 +856,10 @@ impl SkerryGenerator {
                 file.write(&cache_line).unwrap();
             }
 
-            all_arms.push(format!(
-                "    ({file:?}, {line}) => {{ compile_error!(\"{file}:{line} - {msg}\") }};",
-                file = error.file,
-                line = error.line,
-                msg = error.msg
-            ));
+            writer.add_macro_arm_error(&error).unwrap();
         }
 
-        let header = "/* GENERATED BY SKERRY CODEGEN */\n";
-        let output = format!(
-                "{}\n
-                pub enum GlobalErrors<E> {{
-                    {global_variants}_Phantom(std::marker::PhantomData<E>)
-                }}
-                \n
-            mod __skerry_private {{
-                {privates}
-            }}\n
-            {defs} \
-            \n\n \
-            #[macro_export]\nmacro_rules! skerry_invoke {{\n{arms}\n($file:expr, $line:expr) => \
-            {{ compile_error!(concat!(\"Skerry Sync Error: No macro generated for \", $file, \":\", \
-            $line)); }};\n}}",
-                header,
-                global_variants = global_variants,
-                defs = all_defs.join("\n"),
-                arms = all_arms.join("\n"),
-                privates = privates
-            );
-
-        fs::write(self.out_dir.join("skerry_gen.rs"), output).unwrap();
+        writer.finish().unwrap();
         fs::remove_dir_all(&old_cache_dir).unwrap();
         fs::rename(self.new_cache_dir, old_cache_dir).unwrap();
         Self::touch_stamp(&stamp_path);
