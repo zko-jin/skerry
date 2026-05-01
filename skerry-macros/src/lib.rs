@@ -55,10 +55,8 @@ pub fn e(input: TokenStream) -> TokenStream {
 #[cfg(feature = "codegen")]
 #[proc_macro_attribute]
 pub fn skerry_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    use proc_macro2::TokenStream;
-
-    let span = proc_macro2::Span::call_site();
-    let line = span.start().line;
+    let span = proc_macro::Span::call_site();
+    let line = span.start().line();
     let line_lit = proc_macro2::Literal::usize_unsuffixed(line);
     let file = span.file();
     let short_path = if let Some(idx) = file.find("src/") {
@@ -67,13 +65,14 @@ pub fn skerry_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
         &file
     };
 
-    let tokens: TokenStream = item.into();
-
-    quote! {
+    eprintln!("{} - {}, {:?}", short_path, line, span);
+    let mut output: TokenStream = quote! {
         skerry_invoke!{ #short_path, #line_lit }
-        #tokens
     }
-    .into()
+    .into();
+
+    output.extend(item);
+    output
 }
 
 /// An attribute macro to automate function-specific error handling.

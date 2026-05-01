@@ -409,7 +409,23 @@ impl SkerryWriter {
     }
 
     pub fn add_variant(&mut self, module: &str, ty: &str) -> io::Result<()> {
-        write!(self.global_variants, "{ty}({module}::{ty}),")
+        write!(self.global_variants, "{ty}({module}::{ty}),")?;
+        // writeln!(
+        //     self.writer,
+        //     "impl skerry::skerry_internals::Contains<{module}::{ty}> for {module}::{ty}{{}}"
+        // )?;
+        // write!(
+        //     self.writer,
+        //     "impl<T: skerry::skerry_internals::Contains<{module}::{ty}>>\
+        //     skerry::skerry_internals::IsSupersetOf<T> for {module}::{ty}{{}}
+        //     impl From<{module}::{ty}> for GlobalErrors<{module}::{ty}> {{
+        //         fn from(val: {module}::{ty}) -> Self {{
+        //             GlobalErrors::{ty}(val)
+        //         }}
+        //     }}"
+        // )?;
+
+        Ok(())
     }
 
     pub fn add_define(&mut self, ty: &str, variants: &Vec<String>) -> io::Result<()> {
@@ -437,12 +453,12 @@ impl SkerryWriter {
         }
         write!(
             self.writer,
-            "> skerry::skerry_internals::IsSupersetOf<T> for {ty}{{}}"
+            "> skerry::skerry_internals::IsSubsetOf<T> for {ty}{{}}"
         )?;
 
         write!(
             self.writer,
-            "impl<E: Into<GlobalErrors<E>> + skerry::skerry_internals::IsSubsetOf<{ty}> + \
+            "impl<E: Into<GlobalErrors> + skerry::skerry_internals::IsSubsetOf<{ty}> + \
             __skerry_private::Not{ty}> From<E> for {ty} {{fn from(val:E)->{ty}{{match val.into(){{"
         )?;
         for t in variants {
@@ -463,8 +479,8 @@ impl SkerryWriter {
 
         writeln!(
             self.writer,
-            "impl From<{ty}> for GlobalErrors<{ty}> {{
-                fn from(val: {ty}) -> GlobalErrors<{ty}> {{
+            "impl From<{ty}> for GlobalErrors {{
+                fn from(val: {ty}) -> GlobalErrors {{
                     match val {{",
         )?;
         for t in variants {
@@ -491,7 +507,7 @@ impl SkerryWriter {
     pub fn add_macro_arm_error(&mut self, error: &TypeDefinitionError) -> io::Result<()> {
         write!(
             self.macro_arms,
-            "({file:?}, {line}) => {{compile_error!(\"{file}:{line} - {msg}\"}};",
+            "({file:?}, {line}) => {{compile_error!(\"{file}:{line} - {msg}\")}};",
             file = error.file,
             line = error.line,
             msg = error.msg
@@ -508,18 +524,14 @@ impl SkerryWriter {
     pub fn finish(self) -> io::Result<()> {
         let SkerryWriter {
             mut writer,
-            mut global_variants,
-            mut privates,
-            mut macro_arms,
+            global_variants,
+            privates,
+            macro_arms,
         } = self;
 
-        global_variants.flush()?;
-        privates.flush()?;
-        macro_arms.flush()?;
-
-        write!(writer, "pub enum GlobalErrors<E>{{")?;
+        write!(writer, "pub enum GlobalErrors{{")?;
         writer.write(&global_variants.into_inner()?)?;
-        write!(writer, "_Phantom(std::marker::PhantomData<E>)}}")?;
+        write!(writer, "}}")?;
 
         write!(writer, "mod __skerry_private{{")?;
         writer.write(&privates.into_inner()?)?;
@@ -527,12 +539,14 @@ impl SkerryWriter {
 
         write!(writer, "#[macro_export]\nmacro_rules! skerry_invoke {{")?;
         writer.write(&macro_arms.into_inner()?)?;
-        write!(
-            writer,
-            "($file:expr, $line:expr) => {{ compile_error!(concat!\
-            (\"Skerry Sync Error: No macro generated for \", $file, \":\", $line));}}}}"
-        )?;
+        // write!(
+        //     writer,
+        //     "($file:expr, $line:expr) => {{ compile_error!(concat!\
+        //     (\"Skerry Sync Error: No macro generated for \", $file, \":\", $line));}}}}"
+        // )?;
+        write!(writer, "($file:expr, $line:expr) => {{}}}}")?;
 
+        // Is this needed? Maybe dropping the writer flushes it already
         writer.flush()
     }
 }
@@ -808,40 +822,6 @@ impl SkerryGenerator {
                 all_types.dedup();
 
                 writer.add_define(&name, &all_types).unwrap();
-                // all_defs.push(quote! {
-                //     impl<T: #(skerry::skerry_internals::Contains<crate::#all_types>)+*> skerry::skerry_internals::IsSupersetOf<T> for #ty {}
-
-                //     impl<E: Into<GlobalErrors<E>> + skerry::skerry_internals::IsSubsetOf<#ty> + __skerry_private::#not_trait> From<E> for #ty
-                //     {
-                //         fn from(val: E) -> #ty {
-                //             match val.into() {
-                //                 #(
-                //                     GlobalErrors::#all_types(v) => {
-                //                         #ty::#all_types(v)
-                //                     }
-                //                 )*
-                //                 _ => unreachable!(),
-                //             }
-                //         }
-                //     }
-                //     #(
-                //         impl From<crate::#all_types> for #ty {
-                //             fn from(val: crate::#all_types) -> #ty {
-                //                 #ty::#all_types(val)
-                //             }
-                //         }
-                //     )*
-
-                //     impl From<#ty> for GlobalErrors<#ty> {
-                //         fn from(val: #ty) -> GlobalErrors<#ty> {
-                //             match val {
-                //                 #(
-                //                     #ty::#all_types(v) => GlobalErrors::#all_types(v),
-                //                 )*
-                //             }
-                //         }
-                //     }
-                // }.to_string());
 
                 expansions.insert(name, all_types);
             }

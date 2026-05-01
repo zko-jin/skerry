@@ -17,6 +17,7 @@ enum ErrorInput {
 }
 
 struct EInput {
+    span: proc_macro2::Span,
     _errors: Vec<ErrorInput>,
 }
 
@@ -31,6 +32,8 @@ impl Parse for EInput {
             ));
         }
 
+        let span = input.span();
+
         while !input.is_empty() {
             if input.peek(Token![*]) {
                 input.parse::<Token![*]>()?;
@@ -42,15 +45,15 @@ impl Parse for EInput {
                 input.parse::<Token![,]>()?;
             }
         }
-        Ok(EInput { _errors })
+        Ok(EInput { span, _errors })
     }
 }
 
 pub fn e(input: TokenStream) -> TokenStream {
-    let _input = parse_macro_input!(input as EInput);
+    let input = parse_macro_input!(input as EInput);
 
-    let span = proc_macro::Span::call_site();
-    let line = span.start().line();
+    let span = input.span;
+    let line = span.start().line;
     let line_lit = proc_macro2::Literal::usize_unsuffixed(line);
     let file = span.file();
     let short_path = if let Some(idx) = file.find("src/") {
