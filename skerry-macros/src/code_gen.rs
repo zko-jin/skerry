@@ -1,8 +1,17 @@
+use ahash::RandomState;
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{
+    ToTokens,
+    quote,
+};
 use syn::{
+    GenericArgument,
     Ident,
+    ItemFn,
+    PathArguments,
+    ReturnType,
     Token,
+    Type,
     parse::{
         Parse,
         ParseStream,
@@ -10,60 +19,99 @@ use syn::{
     parse_macro_input,
 };
 
-#[allow(dead_code)]
+pub fn calculate_sig_hash(sig: &syn::Signature) -> u64 {
+    let sig_string = sig.to_token_stream().to_string();
+    let normalized: String = sig_string.chars().filter(|c| !c.is_whitespace()).collect();
+
+    let hasher = RandomState::with_seeds(0, 0, 0, 0);
+    hasher.hash_one(normalized)
+}
+
+#[allow(unused)]
 enum ErrorInput {
     Standard(Ident),
     Spread(Ident),
 }
 
+#[allow(unused)]
 struct EInput {
-    span: proc_macro2::Span,
-    _errors: Vec<ErrorInput>,
+    errors: Vec<ErrorInput>,
 }
 
 impl Parse for EInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut _errors = Vec::new();
+        let mut errors = Vec::new();
 
         if input.is_empty() {
             return Err(syn::Error::new(
                 input.span(),
-                "e![] requires you to define at least one error",
+                "Attribute requires you to define at least one error",
             ));
         }
-
-        let span = input.span();
 
         while !input.is_empty() {
             if input.peek(Token![*]) {
                 input.parse::<Token![*]>()?;
-                _errors.push(ErrorInput::Spread(input.parse()?));
+                errors.push(ErrorInput::Spread(input.parse()?));
             } else {
-                _errors.push(ErrorInput::Standard(input.parse()?));
+                errors.push(ErrorInput::Standard(input.parse()?));
             }
             if input.peek(Token![,]) {
                 input.parse::<Token![,]>()?;
             }
         }
-        Ok(EInput { span, _errors })
+        Ok(EInput { errors })
     }
 }
 
-pub fn e(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as EInput);
+pub fn e(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let _input = parse_macro_input!(attr as EInput);
 
-    let span = input.span;
-    let line = span.start().line;
-    let line_lit = proc_macro2::Literal::usize_unsuffixed(line);
-    let file = span.file();
-    let short_path = if let Some(idx) = file.find("src/") {
-        &file[idx..]
-    } else {
-        &file
+    let mut input_fn = parse_macro_input!(item as ItemFn);
+    let sig = &input_fn.sig;
+
+    let sig_hash = proc_macro2::Literal::u64_unsuffixed(calculate_sig_hash(sig));
+
+    let return_type = match &sig.output {
+        ReturnType::Type(_, ty) => match extract_result_type(ty) {
+            Some(inner) => inner,
+            None => {
+                return syn::Error::new_spanned(ty, "Function must return Result<T>")
+                    .to_compile_error()
+                    .into();
+            }
+        },
+        ReturnType::Default => {
+            return syn::Error::new_spanned(&sig.fn_token, "Function must return Result<T>")
+                .to_compile_error()
+                .into();
+        }
     };
 
-    quote! {
-        skerry_invoke!{#short_path, #line_lit}
+    input_fn.sig.output = syn::parse2(quote! {
+        -> Result<#return_type, skerry_invoke!{#sig_hash}>
+    })
+    .expect("Failed to rewrite return type");
+
+    TokenStream::from(quote! {
+        #input_fn
+    })
+}
+
+fn extract_result_type(ty: &Type) -> Option<&Type> {
+    let path = match ty {
+        Type::Path(tp) => &tp.path,
+        _ => return None,
+    };
+    let last_segment = path.segments.last()?;
+    if last_segment.ident != "Result" {
+        return None;
     }
-    .into()
+
+    if let PathArguments::AngleBracketed(args) = &last_segment.arguments {
+        if let Some(GenericArgument::Type(inner)) = args.args.first() {
+            return Some(inner);
+        }
+    }
+    None
 }

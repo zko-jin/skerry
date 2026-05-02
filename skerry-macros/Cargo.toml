@@ -19,6 +19,7 @@ syn = { version = "2.0.117", features = ["full", "visit-mut"] }
 quote = "1.0.45"
 proc-macro2 = { version = "1.0.106" }
 cfg-if = "1.0.4"
+ahash = { workspace = true }
 
 [features]
 default = []

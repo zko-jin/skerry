@@ -47,27 +47,16 @@ mod internal {
 mod code_gen;
 
 #[cfg(feature = "codegen")]
-#[proc_macro]
-pub fn e(input: TokenStream) -> TokenStream {
-    code_gen::e(input)
+#[proc_macro_attribute]
+pub fn e(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    code_gen::e(_attr, item)
 }
 
 #[cfg(feature = "codegen")]
 #[proc_macro_attribute]
 pub fn skerry_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let span = proc_macro::Span::call_site();
-    let line = span.start().line();
-    let line_lit = proc_macro2::Literal::usize_unsuffixed(line);
-    let file = span.file();
-    let short_path = if let Some(idx) = file.find("src/") {
-        &file[idx..]
-    } else {
-        &file
-    };
-
-    eprintln!("{} - {}, {:?}", short_path, line, span);
     let mut output: TokenStream = quote! {
-        skerry_invoke!{ #short_path, #line_lit }
+        // skerry_invoke!{ #short_path, #line_lit }
     }
     .into();
 

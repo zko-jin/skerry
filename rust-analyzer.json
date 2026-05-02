@@ -5,6 +5,6 @@
     }
   },
   "procMacro": {
-    "enable": true
+    "enable": false
   }
 }

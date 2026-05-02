@@ -41,28 +41,24 @@ impl From<OuterError> for GlobalErrors {
 }
 impl<T: Contains<Outer>> IsSubsetOf<T> for OuterError {}
 
-fn my_fn_1() -> Result<(), e![ErrA, Outer]> {
-    let r: Result<(), OuterError> = Err(OuterError);
-    r?;
-    Ok(())
-}
-
-fn my_fn_2_1() -> Result<(), crate::errors::MyFn2Error> {
-    // let r: Result<(), Outer> = Err(Outer(OuterError));
+#[e(ErrA, Outer)]
+fn my_fn_1() -> Result<()> {
+    let _r: Result<(), OuterError> = Err(OuterError);
     // r?;
-    my_fn_1()?;
     Ok(())
 }
 
-pub fn my_fn_2() -> Result<(), e![ErrB, *MyFn1Error]> {
+#[e(ErrB, *MyFn1Error)]
+pub fn my_fn_2() -> Result<()> {
     // my_fn_1()?;
     Ok(())
 }
 
 #[allow(unused)]
 trait TestTrait {
-    fn my_fn_1() -> Result<(), e![ErrA, ErrB, *MyFn2Error]> {
-        my_fn_2()?;
-        Ok(())
-    }
+    // #[e(*MyFn2Error)]
+    // fn my_fn_1() -> Result<()> {
+    //     my_fn_2()?;
+    //     Ok(())
+    // }
 }
