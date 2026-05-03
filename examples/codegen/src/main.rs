@@ -49,16 +49,16 @@ fn my_fn_1() -> Result<()> {
 }
 
 #[e(ErrB, *MyFn1Error)]
-pub fn my_fn_2() -> Result<()> {
-    // my_fn_1()?;
+pub fn my_fn_3() -> Result<()> {
+    my_fn_1()?;
     Ok(())
 }
 
 #[allow(unused)]
 trait TestTrait {
-    // #[e(*MyFn2Error)]
-    // fn my_fn_1() -> Result<()> {
-    //     my_fn_2()?;
-    //     Ok(())
-    // }
+    #[e(*MyFn3Error)]
+    fn my_fn_5() -> Result<()> {
+        my_fn_3()?;
+        Ok(())
+    }
 }

@@ -19,6 +19,11 @@ use syn::{
     parse_macro_input,
 };
 
+pub fn calculate_ident_hash(ident: &syn::Ident) -> u64 {
+    let hasher = RandomState::with_seeds(0, 0, 0, 0);
+    hasher.hash_one(ident.to_string())
+}
+
 pub fn calculate_sig_hash(sig: &syn::Signature) -> u64 {
     let sig_string = sig.to_token_stream().to_string();
     let normalized: String = sig_string.chars().filter(|c| !c.is_whitespace()).collect();
@@ -89,7 +94,7 @@ pub fn e(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     input_fn.sig.output = syn::parse2(quote! {
-        -> Result<#return_type, skerry_invoke!{#sig_hash}>
+        -> Result<#return_type, skerry::skerry_invoke!(#sig_hash)>
     })
     .expect("Failed to rewrite return type");
 

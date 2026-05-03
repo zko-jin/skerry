@@ -2,17 +2,9 @@ use std::{
     env,
     fs::{
         self,
-        File,
     },
-    io::{
-        self,
-        BufWriter,
-        Write,
-    },
-    path::{
-        Path,
-        PathBuf,
-    },
+    io::Write,
+    path::PathBuf,
     time::SystemTime,
 };
 
@@ -38,12 +30,16 @@ use syn::{
 };
 use topological_sort::TopologicalSort;
 
-pub fn calculate_ident_hash(ident: &syn::Ident) -> u64 {
+use crate::writer::SkerryWriter;
+
+mod writer;
+
+fn calculate_ident_hash(ident: &syn::Ident) -> u64 {
     let hasher = RandomState::with_seeds(0, 0, 0, 0);
     hasher.hash_one(ident.to_string())
 }
 
-pub fn calculate_sig_hash(sig: &syn::Signature) -> u64 {
+fn calculate_sig_hash(sig: &syn::Signature) -> u64 {
     let sig_string = sig.to_token_stream().to_string();
     let normalized: String = sig_string.chars().filter(|c| !c.is_whitespace()).collect();
 
@@ -178,7 +174,6 @@ impl<'a> SkerryScanner<'a> {
         let mut composites = Vec::new();
 
         let Some(attr) = attrs.iter().find(|a| a.path().is_ident("e")) else {
-            println!("cargo::warning=not stuff {}", sig.ident);
             return;
         };
 
@@ -388,143 +383,6 @@ pub struct SkerryGenerator {
 pub enum SkerryCodeGenError {
     MissingInclude,
 }
-
-struct SkerryWriter {
-    writer: BufWriter<File>,
-    global_variants: BufWriter<Vec<u8>>,
-    privates: BufWriter<Vec<u8>>,
-    macro_arms: BufWriter<Vec<u8>>,
-}
-
-impl SkerryWriter {
-    pub fn new(path: &Path) -> Self {
-        let file = File::create(path.join("skerry_gen.rs")).unwrap();
-        Self {
-            writer: BufWriter::new(file),
-            global_variants: BufWriter::new(Vec::new()),
-            privates: BufWriter::new(Vec::new()),
-            macro_arms: BufWriter::new(Vec::new()),
-        }
-    }
-
-    pub fn add_variant(&mut self, module: &str, ty: &str) -> io::Result<()> {
-        write!(self.global_variants, "{ty}({module}::{ty}),")?;
-        Ok(())
-    }
-
-    pub fn add_define(&mut self, ty: &str, variants: &Vec<String>) -> io::Result<()> {
-        write!(self.writer, "pub enum {ty} {{")?;
-        for variant in variants {
-            write!(self.writer, "{variant}(crate::{variant}),")?;
-        }
-        write!(self.writer, "}}")?;
-
-        for variant in variants {
-            write!(
-                self.writer,
-                "impl skerry::skerry_internals::Contains<crate::{variant}> for {ty}{{}}"
-            )?;
-        }
-        write!(self.writer, "impl <T:")?;
-        for (i, t) in variants.iter().enumerate() {
-            if i > 0 {
-                write!(self.writer, "+")?;
-            }
-            write!(
-                self.writer,
-                "skerry::skerry_internals::Contains<crate::{t}>",
-            )?;
-        }
-        write!(
-            self.writer,
-            "> skerry::skerry_internals::IsSubsetOf<T> for {ty}{{}}"
-        )?;
-
-        write!(
-            self.writer,
-            "impl<E: Into<GlobalErrors> + skerry::skerry_internals::IsSubsetOf<{ty}> + \
-            __skerry_private::Not{ty}> From<E> for {ty} {{fn from(val:E)->{ty}{{match val.into(){{"
-        )?;
-        for t in variants {
-            writeln!(self.writer, "GlobalErrors::{t}(v) => {ty}::{t}(v),",)?;
-        }
-        write!(self.writer, "_ => unreachable!()}}}}}}")?;
-
-        for t in variants {
-            writeln!(
-                self.writer,
-                "impl From<crate::{t}> for {ty} {{
-                    fn from(val: crate::{t}) -> {ty} {{
-                        {ty}::{t}(val)
-                    }}
-                }}",
-            )?;
-        }
-
-        writeln!(
-            self.writer,
-            "impl From<{ty}> for GlobalErrors {{
-                fn from(val: {ty}) -> GlobalErrors {{
-                    match val {{",
-        )?;
-        for t in variants {
-            writeln!(self.writer, "{ty}::{t}(v) => GlobalErrors::{t}(v),",)?;
-        }
-        writeln!(self.writer, "}}}}}}")?;
-        Ok(())
-    }
-
-    pub fn add_macro_arm_empty(&mut self, hash: u64) -> io::Result<()> {
-        write!(self.macro_arms, "({hash}) => {{}};",)
-    }
-
-    pub fn add_macro_arm_composite(&mut self, hash: u64, module: &str, ty: &str) -> io::Result<()> {
-        write!(self.macro_arms, "({hash}) => {{{module}::{ty}}};",)
-    }
-
-    pub fn add_macro_arm_error(&mut self, hash: u64, msg: &str) -> io::Result<()> {
-        write!(
-            self.macro_arms,
-            "({hash}) => {{compile_error!(\"{msg}\")}};",
-        )
-    }
-
-    pub fn add_not(&mut self, ty: &str) -> io::Result<()> {
-        write!(
-            self.privates,
-            "pub auto trait Not{ty} {{}} impl !Not{ty} for super::{ty} {{}}"
-        )
-    }
-
-    pub fn finish(self) -> io::Result<()> {
-        let SkerryWriter {
-            mut writer,
-            global_variants,
-            privates,
-            macro_arms,
-        } = self;
-
-        write!(writer, "pub enum GlobalErrors{{")?;
-        writer.write(&global_variants.into_inner()?)?;
-        write!(writer, "}}")?;
-
-        write!(writer, "mod __skerry_private{{")?;
-        writer.write(&privates.into_inner()?)?;
-        write!(writer, "}}")?;
-
-        write!(writer, "#[macro_export]\nmacro_rules! skerry_invoke {{")?;
-        writer.write(&macro_arms.into_inner()?)?;
-        write!(
-            writer,
-            "($file:expr) => {{ compile_error!(concat!\
-            (\"Skerry Sync Error: Code not yet generated for this call\"))}}}}"
-        )?;
-
-        // Is this needed? Maybe dropping the writer flushes it already
-        writer.flush()
-    }
-}
-
 impl SkerryGenerator {
     pub fn new() -> Self {
         let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("skerry");
@@ -597,6 +455,7 @@ impl SkerryGenerator {
         fs::create_dir_all(&self.out_dir).unwrap();
         fs::create_dir_all(&old_cache_dir).unwrap();
         fs::create_dir_all(&self.new_cache_dir).unwrap();
+        let _ = fs::remove_dir_all(&self.out_dir.join("expansions"));
 
         let stamp_path = self.out_dir.join("skerry.stamp");
 
@@ -744,8 +603,6 @@ impl SkerryGenerator {
                         continue;
                     }
 
-                    writer.add_not(name).unwrap();
-
                     // Add the node to the sorter
                     ts.insert(name.clone());
 
@@ -782,12 +639,17 @@ impl SkerryGenerator {
                 let mut all_types: Vec<String> = types.clone();
 
                 for composite in composites {
-                    all_types.extend(expansions.get(composite).unwrap().clone());
+                    let expansion = match expansions.get(composite) {
+                        Some(v) => v,
+                        None => continue,
+                    };
+                    all_types.extend_from_slice(expansion);
                 }
                 // TODO: This entire section is horrible, fix this shit later
                 all_types.sort();
                 all_types.dedup();
 
+                writer.add_not(&name).unwrap();
                 writer.add_define(&name, &all_types).unwrap();
 
                 expansions.insert(name, all_types);

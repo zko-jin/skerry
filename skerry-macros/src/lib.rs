@@ -44,6 +44,46 @@ mod internal {
 }
 
 #[cfg(feature = "codegen")]
+#[proc_macro]
+pub fn skerry_invoke(input: TokenStream) -> TokenStream {
+    use std::{
+        env,
+        fs,
+        path::PathBuf,
+    };
+
+    let hash = parse_macro_input!(input as syn::LitInt);
+    let out_dir = PathBuf::from(format!(
+        "{}/skerry/expansions/{}",
+        env::var("OUT_DIR").unwrap(),
+        hash
+    ));
+    eprintln!("{}", hash);
+    let Ok(bytes) = fs::read(out_dir) else {
+        return syn::Error::new_spanned(hash, "Couldn't read expansion result")
+            .to_compile_error()
+            .into();
+    };
+
+    let Some(marker_byte) = bytes.get(0).cloned() else {
+        return syn::Error::new_spanned(hash, "Expansion result empty")
+            .to_compile_error()
+            .into();
+    };
+
+    let expansion = String::from_utf8_lossy(&bytes[1..]);
+    match marker_byte {
+        b'!' => syn::Error::new_spanned(hash, expansion)
+            .to_compile_error()
+            .into(),
+        b'+' => expansion.parse().unwrap(),
+        _ => syn::Error::new_spanned(hash, "Unknown marker. Codegen is corrupted")
+            .to_compile_error()
+            .into(),
+    }
+}
+
+#[cfg(feature = "codegen")]
 mod code_gen;
 
 #[cfg(feature = "codegen")]
@@ -55,13 +95,27 @@ pub fn e(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[cfg(feature = "codegen")]
 #[proc_macro_attribute]
 pub fn skerry_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let mut output: TokenStream = quote! {
-        // skerry_invoke!{ #short_path, #line_lit }
-    }
-    .into();
+    use syn::Item;
 
-    output.extend(item);
-    output
+    use crate::code_gen::calculate_ident_hash;
+
+    let item = parse_macro_input!(item as Item);
+    let ident = match &item {
+        Item::Struct(s) => &s.ident,
+        Item::Enum(e) => &e.ident,
+        _ => {
+            return syn::Error::new_spanned(item, "skerry_error only supports structs and enums")
+                .to_compile_error()
+                .into();
+        }
+    };
+
+    let hash = proc_macro2::Literal::u64_unsuffixed(calculate_ident_hash(ident));
+    quote! {
+        skerry::skerry_invoke!{ #hash }
+        #item
+    }
+    .into()
 }
 
 /// An attribute macro to automate function-specific error handling.

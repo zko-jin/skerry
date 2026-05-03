@@ -281,6 +281,7 @@ pub use skerry_macros::{
     skerry,
     skerry_fn,
     skerry_impl,
+    skerry_invoke,
     skerry_mod,
     skerry_trait,
 };
