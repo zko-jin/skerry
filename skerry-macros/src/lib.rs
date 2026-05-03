@@ -58,7 +58,6 @@ pub fn skerry_invoke(input: TokenStream) -> TokenStream {
         env::var("OUT_DIR").unwrap(),
         hash
     ));
-    eprintln!("{}", hash);
     let Ok(bytes) = fs::read(out_dir) else {
         return syn::Error::new_spanned(hash, "Couldn't read expansion result")
             .to_compile_error()
