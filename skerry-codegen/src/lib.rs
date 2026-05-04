@@ -156,17 +156,17 @@ impl TypeDefinitionError {
     }
 }
 
-struct SkerryScanner<'a> {
+struct SkerryScanner<'a, 'b> {
     file_path: &'a str,
     type_definitions: &'a mut HashMap<String, TypeDefinition>,
     errors: &'a mut Vec<TypeDefinitionError>,
     prefix_stack: Vec<String>,
     module_stack: Vec<String>,
     module: &'a mut Option<String>,
-    generator: &'a mut SkerryGenerator,
+    generator: &'a mut SkerryGenerator<'b>,
 }
 
-impl<'a> SkerryScanner<'a> {
+impl<'a> SkerryScanner<'a, '_> {
     fn process_function_error(&mut self, attrs: &[syn::Attribute], sig: &syn::Signature) {
         let sig_hash = calculate_sig_hash(sig);
 
@@ -246,7 +246,7 @@ impl<'a> SkerryScanner<'a> {
     }
 }
 
-impl<'a> Visit<'a> for SkerryScanner<'a> {
+impl<'a> Visit<'a> for SkerryScanner<'a, '_> {
     fn visit_item(&mut self, i: &'a Item) {
         let (attrs, ident) = match i {
             Item::Struct(s) => {
@@ -262,12 +262,8 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
                 (attrs, ident)
             }
             Item::Macro(m) => {
-                if m.mac
-                    .path
-                    .segments
-                    .last()
-                    .map_or(false, |s| s.ident == "skerry_include")
-                {
+                let last_segment = m.mac.path.segments.last();
+                if last_segment.map_or(false, |s| s.ident == "skerry_include") {
                     if self.module.is_some() {
                         panic!("skerry_include!() called twice.");
                     }
@@ -278,6 +274,8 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
                         postcard::to_allocvec(&CacheLine::Module(self.module.clone().unwrap()))
                             .unwrap();
                     file.write(&cache_line).unwrap();
+                } else if last_segment.map_or(false, |s| s.ident == "import_error") {
+                    // let hash = calculate_ident_hash(&ident);
                 }
                 visit::visit_item(self, i);
                 return;
@@ -373,8 +371,10 @@ enum CacheLine {
     Errors(TypeDefinitionError),
 }
 
-pub struct SkerryGenerator {
+pub struct SkerryGenerator<'a> {
     module_override: Option<String>,
+    global_error_ident: &'a str,
+
     cache_files: HashMap<String, fs::File>,
     out_dir: PathBuf,
     new_cache_dir: PathBuf,
@@ -383,7 +383,7 @@ pub struct SkerryGenerator {
 pub enum SkerryCodeGenError {
     MissingInclude,
 }
-impl SkerryGenerator {
+impl<'a> SkerryGenerator<'a> {
     pub fn new() -> Self {
         let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("skerry");
         let new_cache_dir = out_dir.join("new_cache");
@@ -393,6 +393,7 @@ impl SkerryGenerator {
             cache_files: HashMap::new(),
             out_dir,
             new_cache_dir,
+            global_error_ident: "GlobalErrors".into(),
         }
     }
 
@@ -401,6 +402,11 @@ impl SkerryGenerator {
     /// needed.
     pub fn override_module(mut self, module_path: impl Into<String>) -> Self {
         self.module_override = Some(module_path.into());
+        self
+    }
+
+    pub fn global_error_ident(mut self, ident: &'a str) -> Self {
+        self.global_error_ident = ident.into();
         self
     }
 
@@ -541,7 +547,7 @@ impl SkerryGenerator {
         let module = self.module_override.take().unwrap_or(module);
 
         let mut ts = TopologicalSort::<String>::new();
-        let mut writer = SkerryWriter::new(&self.out_dir);
+        let mut writer = SkerryWriter::new(&self.out_dir, self.global_error_ident);
 
         // Validate and generate errors
         for (name, def) in &type_definitions {

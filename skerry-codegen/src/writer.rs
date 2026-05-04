@@ -11,15 +11,16 @@ use std::{
     },
 };
 
-pub struct SkerryWriter {
+pub struct SkerryWriter<'a> {
     writer: BufWriter<File>,
     global_variants: BufWriter<Vec<u8>>,
     privates: BufWriter<Vec<u8>>,
     expand_folder: PathBuf,
+    global_error_ident: &'a str,
 }
 
-impl SkerryWriter {
-    pub fn new(path: &Path) -> Self {
+impl<'a> SkerryWriter<'a> {
+    pub fn new(path: &Path, global_error_ident: &'a str) -> Self {
         let expand_folder = path.join("expansions/");
         std::fs::create_dir_all(&expand_folder).unwrap();
         let file = File::create(path.join("skerry_gen.rs")).unwrap();
@@ -28,6 +29,7 @@ impl SkerryWriter {
             global_variants: BufWriter::new(Vec::new()),
             privates: BufWriter::new(Vec::new()),
             expand_folder,
+            global_error_ident,
         }
     }
 
@@ -37,6 +39,7 @@ impl SkerryWriter {
     }
 
     pub fn add_define(&mut self, ty: &str, variants: &Vec<String>) -> io::Result<()> {
+        let global_error = self.global_error_ident;
         write!(self.writer, "pub enum {ty} {{")?;
         for variant in variants {
             write!(self.writer, "{variant}(crate::{variant}),")?;
@@ -66,11 +69,11 @@ impl SkerryWriter {
 
         write!(
             self.writer,
-            "impl<E: Into<GlobalErrors> + skerry::skerry_internals::IsSubsetOf<{ty}> + \
+            "impl<E: Into<{global_error}> + skerry::skerry_internals::IsSubsetOf<{ty}> + \
             __skerry_private::Not{ty}> From<E> for {ty} {{fn from(val:E)->{ty}{{match val.into(){{"
         )?;
         for t in variants {
-            writeln!(self.writer, "GlobalErrors::{t}(v) => {ty}::{t}(v),",)?;
+            writeln!(self.writer, "{global_error}::{t}(v) => {ty}::{t}(v),",)?;
         }
         write!(self.writer, "_ => unreachable!()}}}}}}")?;
 
@@ -87,12 +90,12 @@ impl SkerryWriter {
 
         writeln!(
             self.writer,
-            "impl From<{ty}> for GlobalErrors {{
-                fn from(val: {ty}) -> GlobalErrors {{
+            "impl From<{ty}> for {global_error} {{
+                fn from(val: {ty}) -> {global_error} {{
                     match val {{",
         )?;
         for t in variants {
-            writeln!(self.writer, "{ty}::{t}(v) => GlobalErrors::{t}(v),",)?;
+            writeln!(self.writer, "{ty}::{t}(v) => {global_error}::{t}(v),")?;
         }
         writeln!(self.writer, "}}}}}}")?;
         Ok(())
@@ -128,10 +131,11 @@ impl SkerryWriter {
             mut writer,
             global_variants,
             privates,
+            global_error_ident,
             ..
         } = self;
 
-        write!(writer, "pub enum GlobalErrors{{")?;
+        write!(writer, "pub enum {global_error_ident}{{",)?;
         writer.write(&global_variants.into_inner()?)?;
         write!(writer, "}}")?;
 
