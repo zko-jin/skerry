@@ -1,31 +1,26 @@
 use proc_macro::TokenStream;
-use proc_macro2::{Delimiter, Span, TokenStream as TokenStream2, TokenTree};
-use quote::{ToTokens, format_ident, quote, quote_spanned};
-#[cfg(not(feature = "custom_result"))]
-use syn::{
-    Expr, ExprTry,
-    visit_mut::{self, VisitMut},
+use proc_macro2::{
+    Delimiter,
+    Span,
+    TokenStream as TokenStream2,
+    TokenTree,
+};
+use quote::{
+    ToTokens,
+    format_ident,
+    quote,
+    quote_spanned,
 };
 use syn::{
-    GenericArgument, Ident, ItemFn, PathArguments, ReturnType, TraitItemFn, Type, parse_quote,
+    GenericArgument,
+    Ident,
+    ItemFn,
+    PathArguments,
+    ReturnType,
+    TraitItemFn,
+    Type,
+    parse_quote,
 };
-
-#[cfg(not(feature = "custom_result"))]
-pub struct QuestionMarkTransformer;
-
-#[cfg(not(feature = "custom_result"))]
-impl VisitMut for QuestionMarkTransformer {
-    fn visit_expr_mut(&mut self, node: &mut Expr) {
-        visit_mut::visit_expr_mut(self, node);
-
-        if let Expr::Try(ExprTry { expr, .. }) = node {
-            let inner = expr.as_ref();
-            *node = parse_quote! {
-                #inner.map_err(|e| Into::<GlobalErrors<_>>::into(e))?
-            };
-        }
-    }
-}
 
 /// Internal helper to unify ItemFn and TraitItemFn
 struct SkerryFnInput {
@@ -36,19 +31,6 @@ struct SkerryFnInput {
 }
 
 impl SkerryFnInput {
-    #[cfg(not(feature = "custom_result"))]
-    fn from_fn(mut item: ItemFn) -> Self {
-        let mut transformer = QuestionMarkTransformer;
-        transformer.visit_item_fn_mut(&mut item);
-        Self {
-            sig: item.sig,
-            block: Some(*item.block),
-            attrs: item.attrs,
-            vis: item.vis,
-        }
-    }
-
-    #[cfg(feature = "custom_result")]
     fn from_fn(item: ItemFn) -> Self {
         Self {
             sig: item.sig,
@@ -58,19 +40,6 @@ impl SkerryFnInput {
         }
     }
 
-    #[cfg(not(feature = "custom_result"))]
-    fn from_trait_fn(mut item: TraitItemFn) -> Self {
-        let mut transformer = QuestionMarkTransformer;
-        transformer.visit_trait_item_fn_mut(&mut item);
-        Self {
-            sig: item.sig,
-            block: item.default,
-            attrs: item.attrs,
-            vis: syn::Visibility::Inherited,
-        }
-    }
-
-    #[cfg(feature = "custom_result")]
     fn from_trait_fn(item: TraitItemFn) -> Self {
         Self {
             sig: item.sig,

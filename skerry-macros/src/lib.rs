@@ -1,30 +1,120 @@
 use std::collections::HashSet;
 
-use cfg_if::cfg_if;
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::{
+    format_ident,
+    quote,
+};
 use syn::{
-    Attribute, Ident, ImplItemFn, ItemFn, ItemImpl, ItemTrait, Path, ReturnType, Token,
-    TraitItemFn, Type,
-    parse::{Parse, ParseStream},
-    parse_macro_input, parse_quote,
+    Attribute,
+    Ident,
+    ImplItemFn,
+    ItemFn,
+    ItemImpl,
+    ItemTrait,
+    Path,
+    ReturnType,
+    Token,
+    TraitItemFn,
+    Type,
+    parse::{
+        Parse,
+        ParseStream,
+    },
+    parse_macro_input,
+    parse_quote,
     punctuated::Punctuated,
-    visit_mut::{self, VisitMut},
+    visit_mut::{
+        self,
+        VisitMut,
+    },
 };
 
-use crate::internal::skerry_fn::{format_snake_case, process_inner_errors, quote_error_gen};
+use crate::internal::skerry_fn::{
+    format_snake_case,
+    process_inner_errors,
+    quote_error_gen,
+};
 
 mod internal {
-    pub mod impl_missing_converts;
     pub mod skerry_fn;
     pub mod skerry_impl;
     pub mod skerry_mod;
     pub mod skerry_trait;
 }
 
+#[cfg(feature = "codegen")]
 #[proc_macro]
-pub fn impl_missing_converts(input: TokenStream) -> TokenStream {
-    crate::internal::impl_missing_converts::impl_missing_converts(input)
+pub fn skerry_invoke(input: TokenStream) -> TokenStream {
+    use std::{
+        env,
+        fs,
+        path::PathBuf,
+    };
+
+    let hash = parse_macro_input!(input as syn::LitInt);
+    let out_dir = PathBuf::from(format!(
+        "{}/skerry/expansions/{}",
+        env::var("OUT_DIR").unwrap(),
+        hash
+    ));
+    let Ok(bytes) = fs::read(out_dir) else {
+        return syn::Error::new_spanned(hash, "Couldn't read expansion result")
+            .to_compile_error()
+            .into();
+    };
+
+    let Some(marker_byte) = bytes.get(0).cloned() else {
+        return syn::Error::new_spanned(hash, "Expansion result empty")
+            .to_compile_error()
+            .into();
+    };
+
+    let expansion = String::from_utf8_lossy(&bytes[1..]);
+    match marker_byte {
+        b'!' => syn::Error::new_spanned(hash, expansion)
+            .to_compile_error()
+            .into(),
+        b'+' => expansion.parse().unwrap(),
+        _ => syn::Error::new_spanned(hash, "Unknown marker. Codegen is corrupted")
+            .to_compile_error()
+            .into(),
+    }
+}
+
+#[cfg(feature = "codegen")]
+mod code_gen;
+
+#[cfg(feature = "codegen")]
+#[proc_macro_attribute]
+pub fn e(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    code_gen::e(_attr, item)
+}
+
+#[cfg(feature = "codegen")]
+#[proc_macro_attribute]
+pub fn skerry_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    use syn::Item;
+
+    use crate::code_gen::calculate_ident_hash;
+
+    let item = parse_macro_input!(item as Item);
+    let ident = match &item {
+        Item::Struct(s) => &s.ident,
+        Item::Enum(e) => &e.ident,
+        _ => {
+            return syn::Error::new_spanned(item, "skerry_error only supports structs and enums")
+                .to_compile_error()
+                .into();
+        }
+    };
+
+    let hash = proc_macro2::Literal::u64_unsuffixed(calculate_ident_hash(ident));
+    quote! {
+        skerry::skerry_invoke!{ #hash }
+        #item
+    }
+    .into()
 }
 
 /// An attribute macro to automate function-specific error handling.
@@ -191,6 +281,8 @@ impl Parse for Input {
 pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
     let Input { ty, errors } = parse_macro_input!(input as Input);
 
+    let priv_module = format_ident!("__skerry_private_{}", ty);
+
     let mut seen = HashSet::new();
     let mut deduped = Vec::new();
 
@@ -208,22 +300,7 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
 
     let macro_ident = format_ident!("{}_errors", format_snake_case(&ty.to_string()));
 
-    cfg_if! {
-        if #[cfg(feature = "custom_result")] {
-            let features =
-                quote! {
-                    impl IntoSkerryGlobal for #ty {
-                        type Error = #ty;
-
-                        fn into_global_error(self) -> GlobalErrors<Self::Error> {
-                            self.into()
-                        }
-                    }
-                };
-        } else {
-            let features = quote! {};
-        }
-    }
+    let not_trait = format_ident!("Not{}", ty);
 
     let expanded = quote! {
         #[macro_export]
@@ -249,9 +326,29 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
             )*
         }
 
-        #features
+        mod #priv_module {
+            pub auto trait #not_trait {}
+            impl !#not_trait for super::#ty {}
+        }
 
-        skerry_impl_missing_errors!(#ty, [#(#variants),*]);
+        #(
+            impl skerry::skerry_internals::Contains<#variants> for #ty {}
+        )*
+        impl<T: #(skerry::skerry_internals::Contains<#variants>)+*> skerry::skerry_internals::IsSupersetOf<T> for #ty {}
+
+        impl<E: Into<GlobalErrors<E>> + skerry::skerry_internals::IsSubsetOf<#ty> + #priv_module::#not_trait> From<E> for #ty
+        {
+            fn from(val: E) -> #ty {
+                match val.into() {
+                    #(
+                        GlobalErrors::#variants(v) => {
+                            #ty::#variants(v)
+                        }
+                    )*
+                    _ => unreachable!(),
+                }
+            }
+        }
 
         impl From<#ty> for GlobalErrors<#ty> {
             fn from(val: #ty) -> GlobalErrors<#ty> {
@@ -262,8 +359,6 @@ pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
                 }
             }
         }
-
-        impl skerry::skerry_internals::SkerryError for #ty {}
     };
 
     TokenStream::from(expanded)

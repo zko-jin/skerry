@@ -266,99 +266,6 @@
 //!     Ok(())
 //! }
 //! ```
-//! # Custom Result Feature
-//!
-//! The `custom_result` feature implements a specialized result type and leverages the
-//! unstable features to enable even more automation.
-//!
-//! ## Nightly Features Required
-//!
-//! To use the full suite of automation provided by this feature, you must enable the
-//! following nightly features in your crate root:
-//!
-//! ```rust
-//! #![feature(try_trait_v2)]
-//! #![feature(custom_inner_attributes)]
-//! #![feature(proc_macro_hygiene)]
-//! ```
-//!
-//! ## Overview
-//!
-//! Enabling `custom_result` changes the behavior of the `?` operator to support
-//! automatic conversion into `GlobalErrors<I>`.
-//!
-//! | Feature Gate | Effect |
-//! |--------------|--------|
-//! | `try_trait_v2` | Allows using `?` with custom `Result` types; removes the strict requirement for `#[skerry_fn]` on standard functions. |
-//! | `custom_inner_attributes`/`proc_macro_hygiene` | Enables the use of `#![skerry]` at the top of a file to annotate all contents automatically. |
-//!
-//! ## Comparison
-//!
-//! ### Standard Manual Approach
-//! Traditionally, every function and implementation block requires explicit tagging:
-//!
-//! ```rust,ignore
-//! #[skerry_fn]
-//! fn check_auth() -> Result<(), e![AuthError]> {
-//!     Err(CheckAuthError::AuthError(AuthError))
-//! }
-//!
-//! struct Controller;
-//!
-//! #[skerry_impl(prefix(Controller))]
-//! impl Controller {
-//!     #[skerry_fn]
-//!     pub fn run() -> Result<(), e![LibError, *CheckAuthError]> {
-//!         check_auth()?;
-//!         lib_fn_that_returns_error()?;
-//!         Ok(())
-//!     }
-//! }
-//! #[skerry_trait(prefix(ToJson))]
-//! trait ToJson {
-//!     #[skerry_fn]
-//!     fn to_json(&self) -> Result<(), e![InvalidParse]>;
-//! }
-//!
-//! impl ToJson for Controller {
-//!     #[skerry_fn]
-//!     fn to_json(&self) -> Result<(), ToJsonError> {
-//!         Ok(())
-//!     }
-//! }
-//! ```
-//!
-//! ### Automated Approach with `custom_result`
-//! By adding `#![skerry]` to the top of your module, the boilerplate is handled
-//! automatically.
-//!
-//! ```rust,ignore
-//! #![skerry]
-//!
-//! fn check_auth() -> Result<(), e![AuthError]> {
-//!     Err(CheckAuthError::AuthError(AuthError))
-//! }
-//!
-//! struct Controller;
-//!
-//! impl Controller {
-//!     pub fn run() -> Result<(), e![LibError, *CheckAuthError]> {
-//!         check_auth()?;
-//!         lib_fn_that_returns_error()?;
-//!         Ok(())
-//!     }
-//! }
-//!
-//! trait ToJson {
-//!     fn to_json(&self) -> Result<(), e![InvalidParse]>;
-//! }
-//!
-//! impl ToJson for Controller {
-//!     fn to_json(&self) -> Result<(), ToJsonError> {
-//!         Ok(())
-//!     }
-//! }
-//! ```
 //! ---
 //!
 //! ## Compile-Time Safety
@@ -366,22 +273,41 @@
 //! Skerry uses a custom trait system (`MissingConvert`) to verify error bounds at
 //! compile-time. If you try to use `?` on a function whose errors are not represented
 //! in your current return tuple, the compiler will refuse to build.
-#![cfg_attr(
-    feature = "custom_result",
-    allow(unused_features),
-    feature(try_trait_v2),
-    feature(custom_inner_attributes),
-    feature(proc_macro_hygiene)
-)]
 
-mod helpers;
 mod macros;
 mod traits;
-pub use skerry_macros::{define_error, skerry, skerry_fn, skerry_impl, skerry_mod, skerry_trait};
+pub use skerry_macros::{
+    define_error,
+    skerry,
+    skerry_fn,
+    skerry_impl,
+    skerry_invoke,
+    skerry_mod,
+    skerry_trait,
+};
+
+#[cfg(feature = "codegen")]
+#[macro_export]
+macro_rules! skerry_include {
+    () => {
+        include!(concat!(env!("OUT_DIR"), "/skerry/skerry_gen.rs"));
+    };
+}
+
+#[cfg(feature = "codegen")]
+pub use skerry_macros::{
+    e,
+    skerry_error,
+};
 
 pub mod skerry_internals {
-    pub use crate::{helpers::*, macros::*, traits::*};
+    pub use paste::paste;
     pub use skerry_macros::*;
+
+    pub use crate::{
+        macros::*,
+        traits::*,
+    };
 }
 
 #[cfg(test)]
