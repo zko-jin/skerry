@@ -174,7 +174,6 @@ pub fn quote_error_gen(
     }
 }
 
-// Formats to snake_case
 pub fn format_snake_case(prefix: &str) -> String {
     let mut formatted = String::new();
     for (i, c) in prefix.chars().enumerate() {
@@ -186,8 +185,7 @@ pub fn format_snake_case(prefix: &str) -> String {
     formatted
 }
 
-// Formats to CamelCase
-fn format_camel_case(base: &str) -> String {
+pub fn format_camel_case(base: &str) -> String {
     base.split('_')
         .map(|s| {
             let mut c = s.chars();

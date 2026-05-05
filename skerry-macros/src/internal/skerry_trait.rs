@@ -1,6 +1,11 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{ItemTrait, TraitItem, TraitItemFn, parse_macro_input};
+use syn::{
+    ItemTrait,
+    TraitItem,
+    TraitItemFn,
+    parse_macro_input,
+};
 
 use crate::internal::skerry_impl::ImplTraitAttribute;
 

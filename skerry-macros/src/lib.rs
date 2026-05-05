@@ -7,16 +7,20 @@ use quote::{
 };
 use syn::{
     Attribute,
+    GenericArgument,
     Ident,
     ImplItemFn,
+    ItemEnum,
     ItemFn,
     ItemImpl,
     ItemTrait,
     Path,
+    PathArguments,
     ReturnType,
     Token,
     TraitItemFn,
     Type,
+    Visibility,
     parse::{
         Parse,
         ParseStream,
@@ -24,6 +28,7 @@ use syn::{
     parse_macro_input,
     parse_quote,
     punctuated::Punctuated,
+    spanned::Spanned as _,
     visit_mut::{
         self,
         VisitMut,
@@ -31,6 +36,7 @@ use syn::{
 };
 
 use crate::internal::skerry_fn::{
+    format_camel_case,
     format_snake_case,
     process_inner_errors,
     quote_error_gen,
@@ -42,79 +48,439 @@ mod internal {
     pub mod skerry_mod;
     pub mod skerry_trait;
 }
+struct SkerryErrorList {
+    simple: Vec<Ident>,
+    composite: Vec<Ident>,
+}
 
-#[cfg(feature = "codegen")]
-#[proc_macro]
-pub fn skerry_invoke(input: TokenStream) -> TokenStream {
-    use std::{
-        env,
-        fs,
-        path::PathBuf,
-    };
+impl Parse for SkerryErrorList {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let items: Punctuated<ErrorItem, Token![,]> =
+            input.parse_terminated(ErrorItem::parse, Token![,])?;
 
-    let hash = parse_macro_input!(input as syn::LitInt);
-    let out_dir = PathBuf::from(format!(
-        "{}/skerry/expansions/{}",
-        env::var("OUT_DIR").unwrap(),
-        hash
-    ));
-    let Ok(bytes) = fs::read(out_dir) else {
-        return syn::Error::new_spanned(hash, "Couldn't read expansion result")
-            .to_compile_error()
-            .into();
-    };
+        if items.is_empty() {
+            return Err(syn::Error::new(
+                input.span(),
+                "Should contain at least one element",
+            ));
+        }
 
-    let Some(marker_byte) = bytes.get(0).cloned() else {
-        return syn::Error::new_spanned(hash, "Expansion result empty")
-            .to_compile_error()
-            .into();
-    };
+        let mut simple = Vec::new();
+        let mut composite = Vec::new();
 
-    let expansion = String::from_utf8_lossy(&bytes[1..]);
-    match marker_byte {
-        b'!' => syn::Error::new_spanned(hash, expansion)
-            .to_compile_error()
-            .into(),
-        b'+' => expansion.parse().unwrap(),
-        _ => syn::Error::new_spanned(hash, "Unknown marker. Codegen is corrupted")
-            .to_compile_error()
-            .into(),
+        for item in items {
+            match item {
+                ErrorItem::Simple(id) => simple.push(id),
+                ErrorItem::Composite(id) => composite.push(id),
+            }
+        }
+
+        Ok(SkerryErrorList { simple, composite })
     }
 }
 
-#[cfg(feature = "codegen")]
-mod code_gen;
-
-#[cfg(feature = "codegen")]
-#[proc_macro_attribute]
-pub fn e(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    code_gen::e(_attr, item)
+enum ErrorItem {
+    Simple(Ident),
+    Composite(Ident),
 }
 
-#[cfg(feature = "codegen")]
-#[proc_macro_attribute]
-pub fn skerry_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    use syn::Item;
+impl Parse for ErrorItem {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(Token![*]) {
+            input.parse::<Token![*]>()?;
+            Ok(ErrorItem::Composite(input.parse()?))
+        } else {
+            Ok(ErrorItem::Simple(input.parse()?))
+        }
+    }
+}
 
-    use crate::code_gen::calculate_ident_hash;
+struct SkerryExpandInput {
+    error_ident: Ident,
+    simple_list: Vec<Ident>,
+    composite_list: Vec<Ident>,
+    seen_composite_list: Vec<Ident>,
+}
 
-    let item = parse_macro_input!(item as Item);
-    let ident = match &item {
-        Item::Struct(s) => &s.ident,
-        Item::Enum(e) => &e.ident,
-        _ => {
-            return syn::Error::new_spanned(item, "skerry_error only supports structs and enums")
-                .to_compile_error()
-                .into();
+impl Parse for SkerryExpandInput {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let error_ident: Ident = input.parse()?;
+        input.parse::<Token![,]>()?;
+
+        let simple_list = parse_bracketed_list(input)?;
+        input.parse::<Token![,]>()?;
+
+        let composite_list = parse_bracketed_list(input)?;
+        input.parse::<Token![,]>()?;
+
+        let seen_composite_list = parse_bracketed_list(input)?;
+
+        Ok(SkerryExpandInput {
+            error_ident,
+            simple_list,
+            composite_list,
+            seen_composite_list,
+        })
+    }
+}
+
+fn parse_bracketed_list(input: ParseStream) -> syn::Result<Vec<Ident>> {
+    let content;
+
+    syn::bracketed!(content in input);
+
+    let list: Punctuated<Ident, Token![,]> = content.parse_terminated(Ident::parse, Token![,])?;
+
+    Ok(list.into_iter().collect())
+}
+
+#[proc_macro]
+pub fn skerry_expand(input: TokenStream) -> TokenStream {
+    let SkerryExpandInput {
+        error_ident,
+        simple_list,
+        composite_list,
+        mut seen_composite_list,
+    } = parse_macro_input!(input as SkerryExpandInput);
+
+    let seen_names: std::collections::HashSet<String> = seen_composite_list
+        .iter()
+        .map(|id| id.to_string())
+        .collect();
+
+    let mut remaining_composites: Vec<_> = composite_list
+        .into_iter()
+        .filter(|id| !seen_names.contains(&id.to_string()))
+        .collect();
+
+    let expansion_step = if let Some(next_target) = remaining_composites.pop() {
+        seen_composite_list.push(next_target.clone());
+
+        let next_macro_name = format_ident!("__SkerryPrivate_{}_Expand", next_target);
+
+        quote! {
+            #next_macro_name!(
+                #error_ident,
+                [#(#simple_list),*],
+                [#(#remaining_composites),*],
+                [#(#seen_composite_list),*]
+            );
+        }
+    } else {
+        let mut seen_simples = std::collections::HashSet::new();
+        let simple_list: Vec<_> = simple_list
+            .into_iter()
+            .filter(|id| seen_simples.insert(id.to_string()))
+            .collect();
+        let contains_impls = simple_list.iter().map(|v| {
+            quote! {
+                impl skerry::skerry_internals::Contains<__skerry_error_tag!(#v)> for #error_ident {}
+            }
+        });
+
+        let mod_name = format_ident!("__skerry_private_{}", error_ident);
+        let not_ident = format_ident!("Not{}", error_ident);
+
+        let subset_bounds = simple_list.iter().map(|v| {
+            quote! { T: skerry::skerry_internals::Contains<__skerry_error_tag!(#v)> }
+        });
+        quote! {
+            __skerry_global_error_layout!(START pub, #error_ident, [#(#simple_list),*]);
+
+            mod #mod_name {
+                pub auto trait #not_ident {}
+                impl !#not_ident for super::#error_ident {}
+            }
+
+            impl From<#error_ident> for GlobalErrors {
+                fn from(val: #error_ident) -> Self {
+                    __skerry_global_error_layout_convert!(START val,#error_ident,GlobalErrors,[#(#simple_list),*])
+                }
+            }
+
+            #(
+                #contains_impls
+            )*
+
+            impl<T> skerry::skerry_internals::IsSubsetOf<T> for #error_ident
+            where
+                #(#subset_bounds),*
+            {}
+
+                impl<E: Into<GlobalErrors> + skerry::skerry_internals::IsSubsetOf<#error_ident> +
+                    #mod_name::#not_ident> From<E> for #error_ident {
+                        fn from (val: E) -> Self {
+                            let val = val.into();
+                            __skerry_global_error_layout_convert!(START val,GlobalErrors,#error_ident,[#(#simple_list),*])
+                        }
+                    }
         }
     };
 
-    let hash = proc_macro2::Literal::u64_unsuffixed(calculate_ident_hash(ident));
     quote! {
-        skerry::skerry_invoke!{ #hash }
-        #item
+        #expansion_step
     }
     .into()
+}
+
+#[proc_macro_attribute]
+pub fn skerry(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let mut input_fn = parse_macro_input!(item as ItemFn);
+
+    let fn_name = &input_fn.sig.ident.to_string();
+    let fn_camel_case = format_camel_case(fn_name);
+    let enum_ident = format_ident!("{}Error", fn_camel_case);
+
+    let error_tokens = match extract_e_macro_tokens(&input_fn.sig.output) {
+        Ok(v) => v,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    let SkerryErrorList { simple, composite } = match syn::parse2(error_tokens) {
+        Ok(v) => v,
+        Err(e) => return e.into_compile_error().into(),
+    };
+
+    if let ReturnType::Type(_, ref mut ty) = input_fn.sig.output {
+        if let Type::Path(ref mut tp) = **ty {
+            if let Some(last) = tp.path.segments.last_mut() {
+                if let PathArguments::AngleBracketed(ref mut args) = last.arguments {
+                    if let Some(GenericArgument::Type(second_arg)) = args.args.last_mut() {
+                        *second_arg = parse_quote!(#enum_ident);
+                    }
+                }
+            }
+        }
+    }
+
+    let expand_macro_name = format_ident!("__SkerryPrivate_{}_Expand", enum_ident);
+
+    let output = quote! {
+        #input_fn
+
+        #[macro_export]
+        macro_rules! #expand_macro_name {
+            ($target_ident:ident, [$($s:ident),*], [$($c:ident),*], [$($seen:ident),*]) => {
+                skerry::skerry_internals::skerry_expand!(
+                    $target_ident,
+                    [$($s,)* #(#simple),*],
+                    [$($c,)* #(#composite),*],
+                    [$($seen),*]
+                );
+            };
+        }
+
+        skerry::skerry_internals::skerry_expand!(
+            #enum_ident,
+            [#(#simple),*],
+            [#(#composite),*],
+            [#enum_ident]
+        );
+    };
+
+    output.into()
+}
+
+fn extract_e_macro_tokens(output: &ReturnType) -> syn::Result<proc_macro2::TokenStream> {
+    let ty = match output {
+        ReturnType::Type(_, ty) => ty.as_ref(),
+        ReturnType::Default => {
+            return Err(syn::Error::new(
+                output.span(),
+                "Functions must return Result<T, e![...]> to use Skerry.",
+            ));
+        }
+    };
+
+    let tp = match ty {
+        Type::Path(tp) => tp,
+        _ => {
+            return Err(syn::Error::new_spanned(
+                ty,
+                "Skerry expected Result<T, e![...]>.",
+            ));
+        }
+    };
+
+    let last_seg = tp
+        .path
+        .segments
+        .last()
+        .ok_or_else(|| syn::Error::new_spanned(tp, "Skerry expected Result<T, e![...]>."))?;
+
+    if last_seg.ident != "Result" {
+        return Err(syn::Error::new_spanned(
+            &last_seg.ident,
+            "Skerry expected Result<T, e![...]>.",
+        ));
+    }
+
+    let error_ty = if let PathArguments::AngleBracketed(args) = &last_seg.arguments {
+        args.args
+            .iter()
+            .nth(1)
+            .ok_or_else(|| syn::Error::new_spanned(args, "Result must have an error type."))?
+    } else {
+        return Err(syn::Error::new_spanned(
+            last_seg,
+            "Result must use angle brackets.",
+        ));
+    };
+
+    if let GenericArgument::Type(Type::Macro(m)) = error_ty {
+        if m.mac.path.is_ident("e") {
+            Ok(m.mac.tokens.clone())
+        } else {
+            Err(syn::Error::new_spanned(
+                &m.mac.path,
+                "Expected the 'e' macro for error definitions (e![...]).",
+            ))
+        }
+    } else {
+        Err(syn::Error::new_spanned(
+            error_ty,
+            "The error type must be the 'e' macro: e![ErrA, ErrB].",
+        ))
+    }
+}
+
+#[proc_macro_attribute]
+pub fn skerry_global(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as ItemEnum);
+    let _enum_name = &input.ident;
+    match &input.vis {
+        Visibility::Public(_) => {}
+        _ => {
+            return syn::Error::new_spanned(&input.vis, "skerry_global enums must be 'pub'")
+                .to_compile_error()
+                .into();
+        }
+    }
+    let mut macro_arms = quote! {};
+    let mut private_structs = quote! {};
+    let from_impls = quote! {};
+
+    for variant in &input.variants {
+        let var_id = &variant.ident;
+
+        let struct_name = format_ident!("__SkerryPrivate{}", var_id);
+        macro_arms.extend(quote! {
+            (#var_id) => { crate::errors::__skerry_private::#struct_name };
+        });
+        private_structs.extend(quote! {
+            pub struct #struct_name;
+        });
+
+        // if let Fields::Unnamed(ref fields) = variant.fields {
+        //     for field in &fields.unnamed {
+        //         if has_from_attr(&field.attrs) {
+        //             let ty = &field.ty;
+        //             from_impls.extend(quote! {
+        //                 impl From<#ty> for #enum_name {
+        //                     fn from(value: #ty) -> Self {
+        //                         #enum_name::#var_id(value)
+        //                     }
+        //                 }
+        //             });
+        //         }
+        //     }
+        // }
+    }
+    let munch_arms = input.variants.iter().map(|variant| {
+            let var_id = &variant.ident;
+
+            match &variant.fields {
+                syn::Fields::Unit => quote! {
+                    (@munch $val:expr, $f:ident, $t:ident, [ #var_id $(, $rest:ident)* ], { $($acc:tt)* }) => {
+                        __skerry_global_error_layout_convert!(@munch $val, $f, $t, [ $($rest),* ], { $($acc)* $f::#var_id => $t::#var_id, })
+                    };
+                },
+                syn::Fields::Unnamed(fields) => {
+                    let bindings: Vec<_> = fields.unnamed.iter().enumerate()
+                        .map(|(i, _)| format_ident!("v{}", i))
+                        .collect();
+
+                    quote! {
+                        (@munch $val:expr, $f:ident, $t:ident, [ #var_id $(, $rest:ident)* ], { $($acc:tt)* }) => {
+                            __skerry_global_error_layout_convert!(@munch $val, $f, $t, [ $($rest),* ], { $($acc)* $f::#var_id(#(#bindings),*) => $t::#var_id(#(#bindings),*), })
+                        };
+                    }
+                },
+                syn::Fields::Named(fields) => {
+                    let names: Vec<_> = fields.named.iter().map(|f| &f.ident).collect();
+                    quote! {
+                        (@munch $val:expr, $f:ident, $t:ident, [ #var_id $(, $rest:ident)* ], { $($acc:tt)* }) => {
+                            __skerry_global_error_layout_convert!(@munch $val, $f, $t, [ $($rest),* ], { $($acc)* $f::#var_id { #(#names),* } => $t::#var_id { #(#names),* }, })
+                        };
+                    }
+                }
+            }
+        });
+
+    let layout_arms = input.variants.iter().map(|variant| {
+            let var_id = &variant.ident;
+            let fields = &variant.fields;
+
+            quote! {
+                (@munch $vis:vis, $t:ident, [ #var_id $(, $rest:ident)* ], { $($acc:tt)* }) => {
+                    __skerry_global_error_layout!(@munch $vis, $t, [ $($rest),* ], { $($acc)* #var_id #fields, });
+                };
+            }
+        });
+
+    let output = quote! {
+        #input
+
+        #[macro_export]
+        macro_rules! __skerry_error_tag {
+            #macro_arms
+            ($ty:tt) => {compile_error!(concat!(stringify!($ty), " does not exist."))};
+        }
+
+        #[macro_export]
+        macro_rules! __skerry_global_error_layout_convert {
+            (START $val:expr, $from_ty:ident, $to_ty:ident, [ $($variants:ident),* ]) => {
+                __skerry_global_error_layout_convert!(@munch $val, $from_ty, $to_ty, [ $($variants),* ], { })
+            };
+
+            #(#munch_arms)*
+
+            (@munch $val:expr, $f:ident, $t:ident, [ ], { $($acc:tt)* }) => {
+                #[allow(unreachable_patterns)]
+                match $val {
+                    $($acc)*
+                    _ => unreachable!("Unexpected variant"),
+                }
+            };
+        }
+
+        #[macro_export]
+        macro_rules! __skerry_global_error_layout {
+            (START $vis:vis, $ty:ident, [ $($variants:ident),* ]) => {
+                __skerry_global_error_layout!(@munch $vis, $ty, [ $($variants),* ], { });
+            };
+
+            #(#layout_arms)*
+
+            (@munch $vis:vis, $ty:ident, [ ], { $($acc:tt)* }) => {
+                $vis enum $ty {
+                    $($acc)*
+                }
+            };
+        }
+
+        #[macro_export]
+        macro_rules! e {
+            () => {}
+        }
+
+        pub mod __skerry_private {
+            #private_structs
+        }
+
+        #from_impls
+    };
+
+    TokenStream::from(output)
 }
 
 /// An attribute macro to automate function-specific error handling.
@@ -461,8 +827,9 @@ impl VisitMut for SkerryVisitor {
     }
 }
 
+// TODO: add this to the new skerry if applied to entire module
 #[proc_macro_attribute]
-pub fn skerry(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn skerry_old(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut input = parse_macro_input!(item as syn::ItemMod);
     let mut visitor = SkerryVisitor;
 

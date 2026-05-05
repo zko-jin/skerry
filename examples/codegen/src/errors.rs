@@ -1,4 +1,9 @@
-struct OuterError;
+use skerry::{
+    skerry,
+    skerry_global,
+};
+
+pub struct OuterError;
 
 #[skerry_global]
 pub enum GlobalErrors {
@@ -6,4 +11,17 @@ pub enum GlobalErrors {
     ErrB,
     ErrC,
     Outer(OuterError),
+}
+
+#[skerry]
+#[allow(unused)]
+pub fn my_fn_1() -> Result<(), e![ErrA, ErrB, ErrC, Outer]> {
+    Ok(())
+}
+
+#[skerry]
+#[allow(unused)]
+pub fn my_fn_2(err: GlobalErrors) -> Result<(), e![ErrA, *MyFn1Error]> {
+    my_fn_1()?;
+    Ok(())
 }
