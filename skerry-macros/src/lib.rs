@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{
     format_ident,
     quote,
@@ -10,6 +11,7 @@ use syn::{
     GenericArgument,
     Ident,
     ImplItemFn,
+    Item,
     ItemEnum,
     ItemFn,
     ItemImpl,
@@ -17,6 +19,7 @@ use syn::{
     Path,
     PathArguments,
     ReturnType,
+    Signature,
     Token,
     TraitItemFn,
     Type,
@@ -223,24 +226,28 @@ pub fn skerry_expand(input: TokenStream) -> TokenStream {
     .into()
 }
 
-#[proc_macro_attribute]
-pub fn skerry(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let mut input_fn = parse_macro_input!(item as ItemFn);
+fn process_fn(
+    sig: &mut Signature,
+    prefix: &str,
+    empty_on_fail_extract: bool,
+) -> syn::Result<TokenStream2> {
+    let fn_name = sig.ident.to_string();
+    let fn_camel_case = format_camel_case(&fn_name);
+    let enum_ident = format_ident!("{}{}Error", prefix, fn_camel_case);
 
-    let fn_name = &input_fn.sig.ident.to_string();
-    let fn_camel_case = format_camel_case(fn_name);
-    let enum_ident = format_ident!("{}Error", fn_camel_case);
-
-    let error_tokens = match extract_e_macro_tokens(&input_fn.sig.output) {
-        Ok(v) => v,
-        Err(e) => return e.to_compile_error().into(),
+    let error_tokens = match extract_e_macro_tokens(&sig.output) {
+        Ok(t) => t,
+        Err(e) => {
+            if empty_on_fail_extract {
+                return Ok(TokenStream2::new());
+            } else {
+                return Ok(e.into_compile_error());
+            }
+        }
     };
-    let SkerryErrorList { simple, composite } = match syn::parse2(error_tokens) {
-        Ok(v) => v,
-        Err(e) => return e.into_compile_error().into(),
-    };
+    let SkerryErrorList { simple, composite } = syn::parse2(error_tokens)?;
 
-    if let ReturnType::Type(_, ref mut ty) = input_fn.sig.output {
+    if let ReturnType::Type(_, ref mut ty) = sig.output {
         if let Type::Path(ref mut tp) = **ty {
             if let Some(last) = tp.path.segments.last_mut() {
                 if let PathArguments::AngleBracketed(ref mut args) = last.arguments {
@@ -255,8 +262,6 @@ pub fn skerry(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let expand_macro_name = format_ident!("__SkerryPrivate_{}_Expand", enum_ident);
 
     let output = quote! {
-        #input_fn
-
         #[macro_export]
         macro_rules! #expand_macro_name {
             ($target_ident:ident, [$($s:ident),*], [$($c:ident),*], [$($seen:ident),*]) => {
@@ -269,6 +274,7 @@ pub fn skerry(_attr: TokenStream, item: TokenStream) -> TokenStream {
             };
         }
 
+        // TODO: add vis pass
         skerry::skerry_internals::skerry_expand!(
             #enum_ident,
             [#(#simple),*],
@@ -277,7 +283,87 @@ pub fn skerry(_attr: TokenStream, item: TokenStream) -> TokenStream {
         );
     };
 
-    output.into()
+    Ok(output)
+}
+
+#[proc_macro_attribute]
+pub fn skerry(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as Item);
+
+    match input {
+        Item::Fn(mut item_fn) => {
+            let expansion = match process_fn(&mut item_fn.sig, "", false) {
+                Ok(v) => v,
+                Err(e) => return e.into_compile_error().into(),
+            };
+            quote! {
+                #item_fn
+
+                #expansion
+            }
+            .into()
+        }
+        Item::Impl(mut item_impl) => {
+            if item_impl.trait_.is_some() {
+                return syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "#[skerry] does not support trait implementation blocks. \
+                    Instead call #[skerry] in your trait definition.",
+                )
+                .into_compile_error()
+                .into();
+            }
+            let mut expand = quote! {};
+            let prefix = match &*item_impl.self_ty {
+                Type::Path(path) => path
+                    .path
+                    .get_ident()
+                    .map_or("".to_string(), |i| i.to_string()),
+                _ => "".into(),
+            };
+            for impl_item in &mut item_impl.items {
+                match impl_item {
+                    syn::ImplItem::Fn(impl_item_fn) => {
+                        expand.extend(process_fn(&mut impl_item_fn.sig, &prefix, true))
+                    }
+                    _ => {}
+                }
+            }
+            quote! {
+                #expand
+                #item_impl
+            }
+            .into()
+        }
+        // Item::Mod(item_mod) => todo!(),
+        Item::Trait(mut item_trait) => {
+            let mut expand = quote! {};
+            let prefix = item_trait.ident.to_string();
+            for trait_item in &mut item_trait.items {
+                match trait_item {
+                    syn::TraitItem::Fn(trait_item_fn) => {
+                        expand.extend(process_fn(&mut trait_item_fn.sig, &prefix, true))
+                    }
+                    _ => {}
+                }
+            }
+
+            eprintln!("{}", expand);
+            quote! {
+                #expand
+                #item_trait
+            }
+            .into()
+        }
+        _ => {
+            return syn::Error::new_spanned(
+                input,
+                "#[skerry] only supports functions and impl/trait blocks",
+            )
+            .into_compile_error()
+            .into();
+        }
+    }
 }
 
 fn extract_e_macro_tokens(output: &ReturnType) -> syn::Result<proc_macro2::TokenStream> {
@@ -490,7 +576,8 @@ pub fn skerry_global(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         #[macro_export]
         macro_rules! e {
-            () => {}
+            ($($tokens:tt)*) => {
+            };
         }
 
         pub mod __skerry_private {

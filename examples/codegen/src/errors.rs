@@ -28,3 +28,17 @@ pub fn my_fn_2(err: GlobalErrors) -> Result<(), e![ErrA, *MyFn1Error]> {
     my_fn_1()?;
     Ok(())
 }
+
+struct Testt;
+
+#[skerry]
+impl Testt {
+    pub fn test() -> Result<(), e![ErrA]> {
+        Ok(())
+    }
+}
+
+#[skerry]
+trait MyTrait {
+    fn testa() -> Result<(), e![ErrB]>;
+}
