@@ -345,8 +345,8 @@ fn extract_e_macro_tokens(output: &ReturnType) -> syn::Result<proc_macro2::Token
 
 #[proc_macro_attribute]
 pub fn skerry_global(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as ItemEnum);
-    let _enum_name = &input.ident;
+    let mut input = parse_macro_input!(item as ItemEnum);
+    let enum_name = &input.ident;
     match &input.vis {
         Visibility::Public(_) => {}
         _ => {
@@ -357,9 +357,9 @@ pub fn skerry_global(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
     let mut macro_arms = quote! {};
     let mut private_structs = quote! {};
-    let from_impls = quote! {};
+    let mut from_impls = quote! {};
 
-    for variant in &input.variants {
+    for variant in &mut input.variants {
         let var_id = &variant.ident;
 
         let struct_name = format_ident!("__SkerryPrivate{}", var_id);
@@ -370,20 +370,40 @@ pub fn skerry_global(_attr: TokenStream, item: TokenStream) -> TokenStream {
             pub struct #struct_name;
         });
 
-        // if let Fields::Unnamed(ref fields) = variant.fields {
-        //     for field in &fields.unnamed {
-        //         if has_from_attr(&field.attrs) {
-        //             let ty = &field.ty;
-        //             from_impls.extend(quote! {
-        //                 impl From<#ty> for #enum_name {
-        //                     fn from(value: #ty) -> Self {
-        //                         #enum_name::#var_id(value)
-        //                     }
-        //                 }
-        //             });
-        //         }
-        //     }
-        // }
+        if variant.attrs.iter().any(|a| a.path().is_ident("from")) {
+            variant.attrs.retain(|a| !a.path().is_ident("from"));
+            let syn::Fields::Unnamed(ref fields) = variant.fields else {
+                return syn::Error::new_spanned(
+                    variant,
+                    "#[from] can only be applied to tuples with one element",
+                )
+                .into_compile_error()
+                .into();
+            };
+
+            if fields.unnamed.len() > 1 {
+                return syn::Error::new_spanned(
+                    variant,
+                    "#[from] can only be applied to tuples with one element",
+                )
+                .into_compile_error()
+                .into();
+            }
+
+            if let Some(syn::Type::Path(path)) = fields.unnamed.get(0).map(|f| &f.ty) {
+                from_impls.extend(quote! {
+                    impl From<#path> for #enum_name {
+                        fn from(value: #path) -> Self {
+                            #enum_name::#var_id(value)
+                        }
+                    }
+                    impl<T> skerry::skerry_internals::IsSubsetOf<T> for #path
+                    where
+                        T: skerry::skerry_internals::Contains<__skerry_error_tag!(#var_id)>
+                    {}
+                });
+            }
+        }
     }
     let munch_arms = input.variants.iter().map(|variant| {
             let var_id = &variant.ident;
