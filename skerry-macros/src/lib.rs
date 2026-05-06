@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{
@@ -7,21 +5,15 @@ use quote::{
     quote,
 };
 use syn::{
-    Attribute,
     GenericArgument,
     Ident,
-    ImplItemFn,
     Item,
     ItemEnum,
-    ItemFn,
-    ItemImpl,
-    ItemTrait,
     Path,
     PathArguments,
     ReturnType,
     Signature,
     Token,
-    TraitItemFn,
     Type,
     Visibility,
     parse::{
@@ -32,15 +24,10 @@ use syn::{
     parse_quote,
     punctuated::Punctuated,
     spanned::Spanned as _,
-    visit_mut::{
-        self,
-        VisitMut,
-    },
 };
 
 use crate::internal::skerry_fn::{
     format_camel_case,
-    format_snake_case,
     process_inner_errors,
     quote_error_gen,
 };
@@ -195,9 +182,9 @@ pub fn skerry_expand(input: TokenStream) -> TokenStream {
                 impl !#not_ident for super::#error_ident {}
             }
 
-            impl From<#error_ident> for GlobalErrors {
+            impl From<#error_ident> for __skerry_global_error_ident!() {
                 fn from(val: #error_ident) -> Self {
-                    __skerry_global_error_layout_convert!(START val,#error_ident,GlobalErrors,[#(#simple_list),*])
+                    __skerry_global_error_layout_convert!(START val,#error_ident,Self,[#(#simple_list),*])
                 }
             }
 
@@ -210,11 +197,12 @@ pub fn skerry_expand(input: TokenStream) -> TokenStream {
                 #(#subset_bounds),*
             {}
 
-                impl<E: Into<GlobalErrors> + skerry::skerry_internals::IsSubsetOf<#error_ident> +
+                impl<E: Into<__skerry_global_error_ident!()> + skerry::skerry_internals::IsSubsetOf<#error_ident> +
                     #mod_name::#not_ident> From<E> for #error_ident {
                         fn from (val: E) -> Self {
+                            __skerry_global_error_ident_import!(__LocalGlobalErrors);
                             let val = val.into();
-                            __skerry_global_error_layout_convert!(START val,GlobalErrors,#error_ident,[#(#simple_list),*])
+                            __skerry_global_error_layout_convert!(START val,__LocalGlobalErrors,#error_ident,[#(#simple_list),*])
                         }
                     }
         }
@@ -287,7 +275,7 @@ fn process_fn(
 }
 
 #[proc_macro_attribute]
-pub fn skerry(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn skerry(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as Item);
 
     match input {
@@ -533,6 +521,8 @@ pub fn skerry_global(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         });
 
+    let enum_full_path: Path = parse_quote!(crate::errors::#enum_name);
+
     let output = quote! {
         #input
 
@@ -575,6 +565,20 @@ pub fn skerry_global(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         #[macro_export]
+        macro_rules! __skerry_global_error_ident {
+            () => {
+                #enum_full_path
+            };
+        }
+
+        #[macro_export]
+        macro_rules! __skerry_global_error_ident_import {
+            ($ident:ident) => {
+                use #enum_full_path as $ident;
+            };
+        }
+
+        #[macro_export]
         macro_rules! e {
             ($($tokens:tt)*) => {
             };
@@ -586,6 +590,8 @@ pub fn skerry_global(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
         #from_impls
     };
+
+    eprintln!("{}", output);
 
     TokenStream::from(output)
 }
@@ -750,93 +756,6 @@ impl Parse for Input {
     }
 }
 
-#[proc_macro]
-pub fn create_fn_error_step(input: TokenStream) -> TokenStream {
-    let Input { ty, errors } = parse_macro_input!(input as Input);
-
-    let priv_module = format_ident!("__skerry_private_{}", ty);
-
-    let mut seen = HashSet::new();
-    let mut deduped = Vec::new();
-
-    for path in errors {
-        let key = quote!(#path).to_string();
-        if seen.insert(key) {
-            deduped.push(path);
-        }
-    }
-
-    let variants: Vec<Ident> = deduped
-        .iter()
-        .map(|p| p.segments.last().unwrap().ident.clone())
-        .collect();
-
-    let macro_ident = format_ident!("{}_errors", format_snake_case(&ty.to_string()));
-
-    let not_trait = format_ident!("Not{}", ty);
-
-    let expanded = quote! {
-        #[macro_export]
-        macro_rules! #macro_ident {
-            (@callback target: [$type:ident], base: [$fn_name:ident], accum: [$($acc:path),*], remaining: [$($rem:ident),*]) => {
-                skerry::skerry_internals::expand_starred_lists! {
-                    @step
-                    target: [$type],
-                    base: [$fn_name],
-                    accum: [
-                        $($acc),*
-                        ,
-                        #( #deduped ),*
-                    ],
-                    remaining: [$($rem),*]
-                }
-            };
-        }
-
-        pub enum #ty {
-            #(
-                #variants(#deduped),
-            )*
-        }
-
-        mod #priv_module {
-            pub auto trait #not_trait {}
-            impl !#not_trait for super::#ty {}
-        }
-
-        #(
-            impl skerry::skerry_internals::Contains<#variants> for #ty {}
-        )*
-        impl<T: #(skerry::skerry_internals::Contains<#variants>)+*> skerry::skerry_internals::IsSupersetOf<T> for #ty {}
-
-        impl<E: Into<GlobalErrors<E>> + skerry::skerry_internals::IsSubsetOf<#ty> + #priv_module::#not_trait> From<E> for #ty
-        {
-            fn from(val: E) -> #ty {
-                match val.into() {
-                    #(
-                        GlobalErrors::#variants(v) => {
-                            #ty::#variants(v)
-                        }
-                    )*
-                    _ => unreachable!(),
-                }
-            }
-        }
-
-        impl From<#ty> for GlobalErrors<#ty> {
-            fn from(val: #ty) -> GlobalErrors<#ty> {
-                match val {
-                    #(
-                        #ty::#variants(v) => GlobalErrors::#variants(v),
-                    )*
-                }
-            }
-        }
-    };
-
-    TokenStream::from(expanded)
-}
-
 struct DefineErrorInput {
     type_ident: Ident,
     _comma: Token![,],
@@ -871,76 +790,4 @@ pub fn define_error(input: TokenStream) -> TokenStream {
     };
 
     quote_error_gen(type_ident, errors).into()
-}
-
-struct SkerryVisitor;
-
-impl SkerryVisitor {
-    fn is_skerry_result(rt: &ReturnType) -> bool {
-        if let ReturnType::Type(_, ty) = rt {
-            if let Type::Path(tp) = ty.as_ref() {
-                let last_segment = tp.path.segments.last().unwrap();
-                if last_segment.ident == "Result" {
-                    if let syn::PathArguments::AngleBracketed(args) = &last_segment.arguments {
-                        if let Some(syn::GenericArgument::Type(Type::Macro(m))) = args.args.last() {
-                            return m.mac.path.is_ident("e");
-                        }
-                    }
-                }
-            }
-        }
-        false
-    }
-
-    fn add_attr(attrs: &mut Vec<Attribute>, name: &str) {
-        let ident = syn::Ident::new(name, proc_macro2::Span::call_site());
-        attrs.push(parse_quote!(#[#ident]));
-    }
-}
-
-impl VisitMut for SkerryVisitor {
-    fn visit_item_fn_mut(&mut self, i: &mut ItemFn) {
-        if Self::is_skerry_result(&i.sig.output) {
-            Self::add_attr(&mut i.attrs, "skerry_fn");
-        }
-        visit_mut::visit_item_fn_mut(self, i);
-    }
-
-    fn visit_item_impl_mut(&mut self, i: &mut ItemImpl) {
-        Self::add_attr(&mut i.attrs, "skerry_impl");
-        visit_mut::visit_item_impl_mut(self, i);
-    }
-
-    // Handle functions inside impl blocks
-    fn visit_impl_item_fn_mut(&mut self, i: &mut ImplItemFn) {
-        if Self::is_skerry_result(&i.sig.output) {
-            Self::add_attr(&mut i.attrs, "skerry_fn");
-        }
-        visit_mut::visit_impl_item_fn_mut(self, i);
-    }
-
-    // Handle trait definitions
-    fn visit_item_trait_mut(&mut self, i: &mut ItemTrait) {
-        Self::add_attr(&mut i.attrs, "skerry_trait");
-        visit_mut::visit_item_trait_mut(self, i);
-    }
-
-    // Handle functions inside traits
-    fn visit_trait_item_fn_mut(&mut self, i: &mut TraitItemFn) {
-        if Self::is_skerry_result(&i.sig.output) {
-            Self::add_attr(&mut i.attrs, "skerry_fn");
-        }
-        visit_mut::visit_trait_item_fn_mut(self, i);
-    }
-}
-
-// TODO: add this to the new skerry if applied to entire module
-#[proc_macro_attribute]
-pub fn skerry_old(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let mut input = parse_macro_input!(item as syn::ItemMod);
-    let mut visitor = SkerryVisitor;
-
-    visitor.visit_item_mod_mut(&mut input);
-
-    quote!(#input).into()
 }
