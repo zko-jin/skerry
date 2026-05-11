@@ -9,6 +9,7 @@ use syn::{
     Attribute,
     Ident,
     ImplItemFn,
+    ItemEnum,
     ItemFn,
     ItemImpl,
     ItemTrait,
@@ -17,6 +18,7 @@ use syn::{
     Token,
     TraitItemFn,
     Type,
+    Visibility,
     parse::{
         Parse,
         ParseStream,
@@ -52,33 +54,34 @@ pub fn skerry_invoke(input: TokenStream) -> TokenStream {
         path::PathBuf,
     };
 
-    let hash = parse_macro_input!(input as syn::LitInt);
+    use proc_macro2::Span;
+    use skerry_codegen::WrittenResult;
+
+    let span = Span::call_site();
+
     let out_dir = PathBuf::from(format!(
         "{}/skerry/expansions/{}",
         env::var("OUT_DIR").unwrap(),
-        hash
+        input.to_string()
     ));
     let Ok(bytes) = fs::read(out_dir) else {
-        return syn::Error::new_spanned(hash, "Couldn't read expansion result")
+        return syn::Error::new(span, "Couldn't read expansion result")
             .to_compile_error()
             .into();
     };
 
-    let Some(marker_byte) = bytes.get(0).cloned() else {
-        return syn::Error::new_spanned(hash, "Expansion result empty")
+    let Ok(result) = postcard::from_bytes(&bytes) else {
+        return syn::Error::new(span, "Expansion result invalid")
             .to_compile_error()
             .into();
     };
 
-    let expansion = String::from_utf8_lossy(&bytes[1..]);
-    match marker_byte {
-        b'!' => syn::Error::new_spanned(hash, expansion)
-            .to_compile_error()
-            .into(),
-        b'+' => expansion.parse().unwrap(),
-        _ => syn::Error::new_spanned(hash, "Unknown marker. Codegen is corrupted")
-            .to_compile_error()
-            .into(),
+    match result {
+        WrittenResult::Ok(s) => s.parse().unwrap(),
+        WrittenResult::EnumError { location, msg } => {
+            syn::Error::new(span, msg).to_compile_error().into()
+        }
+        WrittenResult::RawError { msg } => syn::Error::new(span, msg).to_compile_error().into(),
     }
 }
 
@@ -111,10 +114,59 @@ pub fn skerry_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let hash = proc_macro2::Literal::u64_unsuffixed(calculate_ident_hash(ident));
     quote! {
-        skerry::skerry_invoke!{ #hash }
+        skerry::skerry_internals::skerry_invoke!{ #hash }
         #item
     }
     .into()
+}
+
+#[proc_macro_attribute]
+pub fn skerry_from(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+#[proc_macro_attribute]
+pub fn skerry_global(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let mut input = parse_macro_input!(item as ItemEnum);
+    match &input.vis {
+        Visibility::Public(_) => {}
+        _ => {
+            return syn::Error::new_spanned(&input.vis, "skerry_global enums must be 'pub'")
+                .to_compile_error()
+                .into();
+        }
+    }
+
+    for variant in &mut input.variants {
+        if variant.attrs.iter().any(|a| a.path().is_ident("from")) {
+            variant.attrs.retain(|a| !a.path().is_ident("from"));
+            let syn::Fields::Unnamed(ref fields) = variant.fields else {
+                return syn::Error::new_spanned(
+                    variant,
+                    "#[from] can only be applied to tuples with one element",
+                )
+                .into_compile_error()
+                .into();
+            };
+
+            if fields.unnamed.len() > 1 {
+                return syn::Error::new_spanned(
+                    variant,
+                    "#[from] can only be applied to tuples with one element",
+                )
+                .into_compile_error()
+                .into();
+            }
+        }
+    }
+
+    let output = quote! {
+        include!(concat!(env!("OUT_DIR"), "/skerry/skerry_gen.rs"));
+        #input
+        skerry::skerry_internals::skerry_invoke!(global);
+    };
+
+    TokenStream::from(output)
 }
 
 /// An attribute macro to automate function-specific error handling.

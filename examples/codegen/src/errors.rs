@@ -1,9 +1,15 @@
-struct OuterError;
+use skerry::skerry_global;
+
+pub struct OuterError;
 
 #[skerry_global]
-pub enum GlobalErrors {
+pub enum Global {
     ErrA,
     ErrB,
-    ErrC,
+    ErrD,
+    ErrC {
+        inner: u32,
+    },
+    #[from]
     Outer(OuterError),
 }

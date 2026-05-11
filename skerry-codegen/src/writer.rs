@@ -11,16 +11,39 @@ use std::{
     },
 };
 
+use serde::{
+    Deserialize,
+    Serialize,
+};
+
+#[derive(Serialize, Deserialize)]
+pub enum EnumErrorLocation {
+    Variant(String),
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum WrittenResult {
+    Ok(String),
+    EnumError {
+        location: EnumErrorLocation,
+        msg: String,
+    },
+    RawError {
+        msg: String,
+    },
+}
+
 pub struct SkerryWriter<'a> {
     writer: BufWriter<File>,
     global_variants: BufWriter<Vec<u8>>,
     privates: BufWriter<Vec<u8>>,
     expand_folder: PathBuf,
-    global_error_ident: &'a str,
+    global_error_path: String,
+    global_module: &'a str,
 }
 
 impl<'a> SkerryWriter<'a> {
-    pub fn new(path: &Path, global_error_ident: &'a str) -> Self {
+    pub fn new(path: &Path, global_error_ident: &'a str, global_module: &'a str) -> Self {
         let expand_folder = path.join("expansions/");
         std::fs::create_dir_all(&expand_folder).unwrap();
         let file = File::create(path.join("skerry_gen.rs")).unwrap();
@@ -29,7 +52,8 @@ impl<'a> SkerryWriter<'a> {
             global_variants: BufWriter::new(Vec::new()),
             privates: BufWriter::new(Vec::new()),
             expand_folder,
-            global_error_ident,
+            global_error_path: format!("{}::{}", global_module, global_error_ident),
+            global_module,
         }
     }
 
@@ -39,12 +63,7 @@ impl<'a> SkerryWriter<'a> {
     }
 
     pub fn add_define(&mut self, ty: &str, variants: &Vec<String>) -> io::Result<()> {
-        let global_error = self.global_error_ident;
-        write!(self.writer, "pub enum {ty} {{")?;
-        for variant in variants {
-            write!(self.writer, "{variant}(crate::{variant}),")?;
-        }
-        write!(self.writer, "}}")?;
+        let global_error = &self.global_error_path;
 
         for variant in variants {
             write!(
@@ -112,11 +131,9 @@ impl<'a> SkerryWriter<'a> {
         )
     }
 
-    pub fn add_macro_arm_error(&mut self, hash: u64, msg: &str) -> io::Result<()> {
-        std::fs::write(
-            self.expand_folder.join(hash.to_string()),
-            &format!("!{msg}"),
-        )
+    pub fn add_macro_arm_error(&mut self, hash: u64, res: WrittenResult) -> io::Result<()> {
+        let bytes = postcard::to_allocvec(&res).unwrap();
+        std::fs::write(self.expand_folder.join(hash.to_string()), &bytes)
     }
 
     pub fn add_not(&mut self, ty: &str) -> io::Result<()> {
@@ -131,17 +148,16 @@ impl<'a> SkerryWriter<'a> {
             mut writer,
             global_variants,
             privates,
-            global_error_ident,
+            global_error_path,
             ..
         } = self;
 
-        write!(writer, "pub enum {global_error_ident}{{",)?;
-        writer.write(&global_variants.into_inner()?)?;
-        write!(writer, "}}")?;
+        let bytes = postcard::to_allocvec(&WrittenResult::Ok(String::new())).unwrap();
+        std::fs::write(self.expand_folder.join("global"), &bytes)?;
 
-        write!(writer, "mod __skerry_private{{")?;
-        writer.write(&privates.into_inner()?)?;
-        write!(writer, "}}")?;
+        // write!(writer, "mod __skerry_private{{")?;
+        // writer.write(&privates.into_inner()?)?;
+        // write!(writer, "}}")?;
 
         // Is this needed? Maybe dropping the writer flushes it already
         writer.flush()

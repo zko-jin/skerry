@@ -29,6 +29,7 @@ use syn::{
     },
 };
 use topological_sort::TopologicalSort;
+pub use writer::WrittenResult;
 
 use crate::writer::SkerryWriter;
 
@@ -156,17 +157,17 @@ impl TypeDefinitionError {
     }
 }
 
-struct SkerryScanner<'a, 'b> {
+struct SkerryScanner<'a> {
     file_path: &'a str,
     type_definitions: &'a mut HashMap<String, TypeDefinition>,
     errors: &'a mut Vec<TypeDefinitionError>,
     prefix_stack: Vec<String>,
     module_stack: Vec<String>,
-    module: &'a mut Option<String>,
-    generator: &'a mut SkerryGenerator<'b>,
+    generator: &'a mut SkerryGenerator,
+    global_error_path: &'a mut Option<(String, String)>,
 }
 
-impl<'a> SkerryScanner<'a, '_> {
+impl<'a> SkerryScanner<'a> {
     fn process_function_error(&mut self, attrs: &[syn::Attribute], sig: &syn::Signature) {
         let sig_hash = calculate_sig_hash(sig);
 
@@ -246,39 +247,44 @@ impl<'a> SkerryScanner<'a, '_> {
     }
 }
 
-impl<'a> Visit<'a> for SkerryScanner<'a, '_> {
+impl<'a> Visit<'a> for SkerryScanner<'a> {
     fn visit_item(&mut self, i: &'a Item) {
-        let (attrs, ident) = match i {
-            Item::Struct(s) => {
-                let ident = &s.ident;
-                let mut s = s.clone();
-                let attrs = std::mem::replace(&mut s.attrs, vec![]);
-                (attrs, ident)
-            }
+        match i {
             Item::Enum(e) => {
-                let ident = &e.ident;
-                let mut e = e.clone();
-                let attrs = std::mem::replace(&mut e.attrs, vec![]);
-                (attrs, ident)
+                let e = e.clone();
+                if e.attrs.iter().any(|a| {
+                    if a.path().is_ident("skerry_global") {
+                        true
+                    } else {
+                        false
+                    }
+                }) {
+                    if self.global_error_path.is_some() {
+                        panic!("Global error already defined");
+                    }
+
+                    *self.global_error_path =
+                        Some((e.ident.to_string(), self.module_stack.join("::")));
+                }
             }
             Item::Macro(m) => {
-                let last_segment = m.mac.path.segments.last();
-                if last_segment.map_or(false, |s| s.ident == "skerry_include") {
-                    if self.module.is_some() {
-                        panic!("skerry_include!() called twice.");
-                    }
-                    *self.module = Some(self.module_stack.join("::"));
+                // let last_segment = m.mac.path.segments.last();
+                // if last_segment.map_or(false, |s| s.ident == "skerry_include") {
+                //     if self.module.is_some() {
+                //         panic!("skerry_include!() called twice.");
+                //     }
+                //     *self.module = Some(self.module_stack.join("::"));
 
-                    let file = self.generator.get_new_cache(&self.file_path);
-                    let cache_line =
-                        postcard::to_allocvec(&CacheLine::Module(self.module.clone().unwrap()))
-                            .unwrap();
-                    file.write(&cache_line).unwrap();
-                } else if last_segment.map_or(false, |s| s.ident == "import_error") {
-                    // let hash = calculate_ident_hash(&ident);
-                }
-                visit::visit_item(self, i);
-                return;
+                //     let file = self.generator.get_new_cache(&self.file_path);
+                //     let cache_line =
+                //         postcard::to_allocvec(&CacheLine::Module(self.module.clone().unwrap()))
+                //             .unwrap();
+                //     file.write(&cache_line).unwrap();
+                // } else if last_segment.map_or(false, |s| s.ident == "import_error") {
+                //     // let hash = calculate_ident_hash(&ident);
+                // }
+                // visit::visit_item(self, i);
+                // return;
             }
             _ => {
                 visit::visit_item(self, i);
@@ -286,36 +292,36 @@ impl<'a> Visit<'a> for SkerryScanner<'a, '_> {
             }
         };
 
-        let hash = calculate_ident_hash(&ident);
+        // let hash = calculate_ident_hash(&ident);
 
-        if attrs.iter().any(|attr| {
-            if attr.path().is_ident("skerry_error") {
-                true
-            } else {
-                false
-            }
-        }) {
-            if self
-                .type_definitions
-                .try_insert(
-                    ident.to_string(),
-                    TypeDefinition::simple(
-                        self.file_path.to_string(),
-                        hash,
-                        self.module_stack.join("::"),
-                    ),
-                )
-                .is_err()
-            {
-                self.errors.push(TypeDefinitionError::new(
-                    DefinitionErrorCause::NameConflict {
-                        name: ident.to_string(),
-                    },
-                    self.file_path.to_string(),
-                    hash,
-                ));
-            }
-        }
+        // if attrs.iter().any(|attr| {
+        //     if attr.path().is_ident("skerry_error") {
+        //         true
+        //     } else {
+        //         false
+        //     }
+        // }) {
+        //     if self
+        //         .type_definitions
+        //         .try_insert(
+        //             ident.to_string(),
+        //             TypeDefinition::simple(
+        //                 self.file_path.to_string(),
+        //                 hash,
+        //                 self.module_stack.join("::"),
+        //             ),
+        //         )
+        //         .is_err()
+        //     {
+        //         self.errors.push(TypeDefinitionError::new(
+        //             DefinitionErrorCause::NameConflict {
+        //                 name: ident.to_string(),
+        //             },
+        //             self.file_path.to_string(),
+        //             hash,
+        //         ));
+        //     }
+        // }
 
         visit::visit_item(self, i);
     }
@@ -366,14 +372,16 @@ impl<'a> Visit<'a> for SkerryScanner<'a, '_> {
 
 #[derive(Serialize, Deserialize)]
 enum CacheLine {
-    Module(String),
+    Global {
+        module: String,
+        global_ident: String,
+    },
     Definition(String, TypeDefinition),
     Errors(TypeDefinitionError),
 }
 
-pub struct SkerryGenerator<'a> {
+pub struct SkerryGenerator {
     module_override: Option<String>,
-    global_error_ident: &'a str,
 
     cache_files: HashMap<String, fs::File>,
     out_dir: PathBuf,
@@ -381,9 +389,9 @@ pub struct SkerryGenerator<'a> {
 }
 
 pub enum SkerryCodeGenError {
-    MissingInclude,
+    MissingGlobalDefinition,
 }
-impl<'a> SkerryGenerator<'a> {
+impl SkerryGenerator {
     pub fn new() -> Self {
         let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap()).join("skerry");
         let new_cache_dir = out_dir.join("new_cache");
@@ -393,7 +401,6 @@ impl<'a> SkerryGenerator<'a> {
             cache_files: HashMap::new(),
             out_dir,
             new_cache_dir,
-            global_error_ident: "GlobalErrors".into(),
         }
     }
 
@@ -402,11 +409,6 @@ impl<'a> SkerryGenerator<'a> {
     /// needed.
     pub fn override_module(mut self, module_path: impl Into<String>) -> Self {
         self.module_override = Some(module_path.into());
-        self
-    }
-
-    pub fn global_error_ident(mut self, ident: &'a str) -> Self {
-        self.global_error_ident = ident.into();
         self
     }
 
@@ -469,8 +471,8 @@ impl<'a> SkerryGenerator<'a> {
 
         let mut type_definitions = HashMap::new();
         let mut failures: Vec<TypeDefinitionError> = Vec::new();
-        let mut module = None;
         let mut expansions: HashMap<String, Vec<String>> = HashMap::new();
+        let mut global_error_path: Option<(String, String)> = None;
 
         for entry in walkdir::WalkDir::new("src")
             .into_iter()
@@ -493,8 +495,11 @@ impl<'a> SkerryGenerator<'a> {
 
                             (cache_line, bytes) = postcard::take_from_bytes(&bytes).unwrap();
                             match cache_line {
-                                CacheLine::Module(s) => {
-                                    module = Some(s);
+                                CacheLine::Global {
+                                    module,
+                                    global_ident,
+                                } => {
+                                    global_error_path = Some((module, global_ident));
                                 }
                                 CacheLine::Definition(name, def) => {
                                     type_definitions.insert(name, def);
@@ -531,23 +536,22 @@ impl<'a> SkerryGenerator<'a> {
                     errors: &mut failures,
                     prefix_stack: Vec::new(),
                     module_stack,
-                    module: &mut module,
                     generator: &mut self,
+                    global_error_path: &mut global_error_path,
                 };
 
                 visit::visit_file(&mut scanner, &syntax_tree);
             }
         }
 
-        let Some(module) = module else {
-            return Err(SkerryCodeGenError::MissingInclude);
-            // panic!("skerry_include!(); never called!");
+        let Some((module, global_error_ident)) = global_error_path else {
+            return Err(SkerryCodeGenError::MissingGlobalDefinition);
         };
 
         let module = self.module_override.take().unwrap_or(module);
 
         let mut ts = TopologicalSort::<String>::new();
-        let mut writer = SkerryWriter::new(&self.out_dir, self.global_error_ident);
+        let mut writer = SkerryWriter::new(&self.out_dir, &global_error_ident, &module);
 
         // Validate and generate errors
         for (name, def) in &type_definitions {
@@ -618,7 +622,7 @@ impl<'a> SkerryGenerator<'a> {
                     }
 
                     writer
-                        .add_macro_arm_composite(*hash, &module, name)
+                        .add_macro_arm_error(*hash, WrittenResult::Ok(format!("{module}::{name}")))
                         .unwrap();
                 }
             }
@@ -671,7 +675,9 @@ impl<'a> SkerryGenerator<'a> {
                 file.write(&cache_line).unwrap();
             }
 
-            writer.add_macro_arm_error(error.hash, &error.msg).unwrap();
+            writer
+                .add_macro_arm_error(error.hash, WrittenResult::RawError { msg: error.msg })
+                .unwrap();
         }
 
         writer.finish().unwrap();

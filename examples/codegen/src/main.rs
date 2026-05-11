@@ -3,62 +3,47 @@
 
 use skerry::{
     e,
-    skerry_error,
+    skerry,
+    skerry_global,
     skerry_internals::{
         Contains,
         IsSubsetOf,
     },
 };
 
-use crate::errors::GlobalErrors;
+// use crate::errors::GlobalErrors;
+
 mod errors;
 
 fn main() {
-    let _ = my_fn_1();
+    // let _ = my_fn_1();
 }
 
-#[skerry_error]
-pub struct ErrA;
+// impl From<OuterError> for GlobalErrors {
+//     fn from(value: OuterError) -> Self {
+//         GlobalErrors::Outer(value)
+//     }
+// }
+// impl<T: Contains<Outer>> IsSubsetOf<T> for OuterError {}
 
-#[skerry_error]
-pub struct ErrB;
+// #[skerry]
+// fn my_fn_1() -> Result<(), e![ErrA, Outer]> {
+//     let _r: Result<(), OuterError> = Err(OuterError);
+//     // r?;
+//     Ok(())
+// }
 
-#[allow(unused)]
-#[skerry_error]
-pub struct ErrC {
-    inner: u32,
-}
+// #[skerry]
+// pub fn my_fn_3() -> Result<(), e![ErrB, *MyFn1Error]> {
+//     my_fn_1()?;
+//     Ok(())
+// }
 
-pub struct OuterError;
-
-#[skerry_error]
-pub struct Outer(OuterError);
-
-impl From<OuterError> for GlobalErrors {
-    fn from(value: OuterError) -> Self {
-        GlobalErrors::Outer(Outer(value))
-    }
-}
-impl<T: Contains<Outer>> IsSubsetOf<T> for OuterError {}
-
-#[e(ErrA, Outer)]
-fn my_fn_1() -> Result<()> {
-    let _r: Result<(), OuterError> = Err(OuterError);
-    // r?;
-    Ok(())
-}
-
-#[e(ErrB, *MyFn1Error)]
-pub fn my_fn_3() -> Result<()> {
-    my_fn_1()?;
-    Ok(())
-}
-
-#[allow(unused)]
-trait TestTrait {
-    #[e(*MyFn3Error)]
-    fn my_fn_5() -> Result<()> {
-        my_fn_3()?;
-        Ok(())
-    }
-}
+// #[skerry]
+// trait TestTrait {
+//     // #[e(*MyFn3Error)]
+//     // fn my_fn_5() -> Result<()> {
+//     //     my_fn_3()?;
+//     //     Ok(())
+//     // }
+// }

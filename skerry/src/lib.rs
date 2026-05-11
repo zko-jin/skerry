@@ -279,19 +279,14 @@ mod traits;
 pub use skerry_macros::{
     define_error,
     skerry,
-    skerry_fn,
-    skerry_impl,
-    skerry_invoke,
-    skerry_mod,
-    skerry_trait,
+    skerry_from,
+    skerry_global,
 };
 
 #[cfg(feature = "codegen")]
 #[macro_export]
 macro_rules! skerry_include {
-    () => {
-        include!(concat!(env!("OUT_DIR"), "/skerry/skerry_gen.rs"));
-    };
+    () => {};
 }
 
 #[cfg(feature = "codegen")]
