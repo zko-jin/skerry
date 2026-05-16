@@ -1,15 +1,9 @@
 #![feature(negative_impls)]
 #![feature(auto_traits)]
 
-use skerry::{
-    e,
-    skerry,
-    skerry_global,
-    skerry_internals::{
-        Contains,
-        IsSubsetOf,
-    },
-};
+use skerry::skerry;
+
+use crate::errors::OuterError;
 
 // use crate::errors::GlobalErrors;
 
@@ -26,12 +20,12 @@ fn main() {
 // }
 // impl<T: Contains<Outer>> IsSubsetOf<T> for OuterError {}
 
-// #[skerry]
-// fn my_fn_1() -> Result<(), e![ErrA, Outer]> {
-//     let _r: Result<(), OuterError> = Err(OuterError);
-//     // r?;
-//     Ok(())
-// }
+#[skerry]
+fn my_fn_1() -> Result<(), e![ErrA, Outer]> {
+    let _r: Result<(), OuterError> = Err(OuterError);
+    // r?;
+    Ok(())
+}
 
 // #[skerry]
 // pub fn my_fn_3() -> Result<(), e![ErrB, *MyFn1Error]> {

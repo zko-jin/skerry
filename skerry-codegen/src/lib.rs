@@ -13,16 +13,22 @@ use hashbrown::{
     HashMap,
     hash_map::Entry,
 };
+use proc_macro2::TokenStream;
 use quote::ToTokens;
 use serde::{
     Deserialize,
     Serialize,
 };
 use syn::{
+    Ident,
     Item,
     ItemImpl,
     ItemTrait,
+    PathArguments,
+    ReturnType,
+    Token,
     Type,
+    parse::ParseStream,
     visit::{
         self,
         Visit,
@@ -40,9 +46,16 @@ fn calculate_ident_hash(ident: &syn::Ident) -> u64 {
     hasher.hash_one(ident.to_string())
 }
 
-fn calculate_sig_hash(sig: &syn::Signature) -> u64 {
+pub fn calculate_sig_hash(prefix: String, sig: &syn::Signature) -> u64 {
     let sig_string = sig.to_token_stream().to_string();
-    let normalized: String = sig_string.chars().filter(|c| !c.is_whitespace()).collect();
+    let normalized: String = format!(
+        "{}{}",
+        prefix,
+        sig_string
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    );
 
     let hasher = RandomState::with_seeds(0, 0, 0, 0);
     hasher.hash_one(normalized)
@@ -52,38 +65,106 @@ fn calculate_sig_hash(sig: &syn::Signature) -> u64 {
 struct CompositeType {
     types: Vec<String>,
     composites: Vec<String>,
+    file: String,
+    hash: u64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+enum SimpleFields {
+    Unit,
+    Unnamed(Vec<UnnamedField>),
+    Named(Vec<NamedField>),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct NamedField {
+    name: String,
+    ty: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct UnnamedField {
+    ty: String,
+}
+
+impl SimpleFields {
+    pub fn display_expansion(&self) -> String {
+        match self {
+            SimpleFields::Unit => String::new(),
+            SimpleFields::Unnamed(fields) => {
+                let mut s = "(".to_string();
+                for i in 0..fields.len() {
+                    s.push_str("var_");
+                    s.push_str(&i.to_string());
+                    s.push(',');
+                }
+                s.push(')');
+                s
+            }
+            SimpleFields::Named(fields) => {
+                let mut s = "{".to_string();
+                for f in fields {
+                    s.push_str(&f.name);
+                    s.push(',');
+                }
+                s.push('}');
+                s
+            }
+        }
+    }
+
+    pub fn display_def(&self) -> String {
+        match self {
+            SimpleFields::Unit => String::new(),
+            SimpleFields::Unnamed(fields) => {
+                let mut s = "(".to_string();
+                for f in fields {
+                    s.push_str(&f.ty);
+                    s.push(',');
+                }
+                s.push(')');
+                s
+            }
+            SimpleFields::Named(fields) => {
+                let mut s = "{".to_string();
+                for f in fields {
+                    s.push_str(&f.name);
+                    s.push(':');
+                    s.push_str(&f.ty);
+                    s.push(',');
+                }
+                s.push('}');
+                s
+            }
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct SimpleType {
+    fields: SimpleFields,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 enum TypeDefinitionType {
-    Simple { mod_path: String },
+    Simple(SimpleType),
     Composite(CompositeType),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 struct TypeDefinition {
-    file: String,
-    hash: u64,
     ty: TypeDefinitionType,
 }
 
 impl TypeDefinition {
-    pub fn file(&self) -> &str {
-        &self.file
-    }
-
-    pub fn simple(file: String, hash: u64, mod_path: String) -> Self {
+    pub fn simple(ty: SimpleType) -> Self {
         Self {
-            file,
-            hash,
-            ty: TypeDefinitionType::Simple { mod_path },
+            ty: TypeDefinitionType::Simple(ty),
         }
     }
 
-    pub fn composite(file: String, hash: u64, composite: CompositeType) -> Self {
+    pub fn composite(composite: CompositeType) -> Self {
         Self {
-            file,
-            hash,
             ty: TypeDefinitionType::Composite(composite),
         }
     }
@@ -167,43 +248,102 @@ struct SkerryScanner<'a> {
     global_error_path: &'a mut Option<(String, String)>,
 }
 
-impl<'a> SkerryScanner<'a> {
-    fn process_function_error(&mut self, attrs: &[syn::Attribute], sig: &syn::Signature) {
-        let sig_hash = calculate_sig_hash(sig);
+#[allow(unused)]
+enum ErrorInput {
+    Standard(Ident),
+    Spread(Ident),
+}
 
-        let mut types = Vec::new();
-        let mut composites = Vec::new();
+fn extract_e_errors(output: &syn::ReturnType) -> Result<(Vec<String>, Vec<String>), ()> {
+    enum ErrorItem {
+        Simple(Ident),
+        Composite(Ident),
+    }
 
-        let Some(attr) = attrs.iter().find(|a| a.path().is_ident("e")) else {
-            return;
-        };
-
-        if let Ok(list) = attr.parse_args_with(|input: syn::parse::ParseStream| {
-            let mut errors = Vec::new();
-            while !input.is_empty() {
-                let is_composite = input.peek(syn::Token![*]);
-                if is_composite {
-                    input.parse::<syn::Token![*]>()?;
-                }
-                let id: syn::Ident = input.parse()?;
-                errors.push((id.to_string(), is_composite));
-                if input.peek(syn::Token![,]) {
-                    input.parse::<syn::Token![,]>()?;
-                }
+    impl syn::parse::Parse for ErrorItem {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            if input.peek(Token![*]) {
+                input.parse::<Token![*]>()?;
+                Ok(ErrorItem::Composite(input.parse()?))
+            } else {
+                Ok(ErrorItem::Simple(input.parse()?))
             }
-            Ok(errors)
-        }) {
-            for (name, is_composite) in list {
-                if is_composite {
-                    composites.push(name);
-                } else {
-                    types.push(name);
-                }
-            }
-        } else {
-            // No need to handle Err, the proc macro already validated the syntax
-            return;
         }
+    }
+
+    struct SkerryErrorList {
+        simple: Vec<Ident>,
+        composite: Vec<Ident>,
+    }
+
+    impl syn::parse::Parse for SkerryErrorList {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            let items: syn::punctuated::Punctuated<ErrorItem, Token![,]> =
+                input.parse_terminated(ErrorItem::parse, Token![,])?;
+
+            if items.is_empty() {
+                return Err(syn::Error::new(
+                    input.span(),
+                    "Should contain at least one element",
+                ));
+            }
+
+            let mut simple = Vec::new();
+            let mut composite = Vec::new();
+
+            for item in items {
+                match item {
+                    ErrorItem::Simple(id) => simple.push(id),
+                    ErrorItem::Composite(id) => composite.push(id),
+                }
+            }
+
+            Ok(SkerryErrorList { simple, composite })
+        }
+    }
+    match &output {
+        ReturnType::Type(_, ty) => {
+            let tokens = extract_result_error_tokens(ty)?;
+            let errors: SkerryErrorList = syn::parse2(tokens).unwrap();
+            Ok((
+                errors.simple.into_iter().map(|e| e.to_string()).collect(),
+                errors
+                    .composite
+                    .into_iter()
+                    .map(|e| e.to_string())
+                    .collect(),
+            ))
+        }
+        ReturnType::Default => Err(()),
+    }
+}
+
+fn extract_result_error_tokens(ty: &Type) -> Result<TokenStream, ()> {
+    let path = match ty {
+        Type::Path(tp) => &tp.path,
+        _ => panic!(),
+    };
+    let last_segment = path.segments.last().unwrap();
+    if last_segment.ident != "Result" {
+        panic!();
+    }
+
+    let PathArguments::AngleBracketed(args) = &last_segment.arguments else {
+        panic!()
+    };
+
+    let macro_arg = args.args.get(1).unwrap();
+    match macro_arg {
+        syn::GenericArgument::Type(Type::Macro(m)) => Ok(m.mac.tokens.clone()),
+        _ => todo!(),
+    }
+}
+
+impl<'a> SkerryScanner<'a> {
+    fn process_function_error(&mut self, sig: &syn::Signature) {
+        let sig_hash = calculate_sig_hash(self.prefix_stack.join(""), sig);
+
+        let (types, composites) = extract_e_errors(&sig.output).unwrap();
 
         // Maybe later verify the return type to return early. The proc macro already validates
         // this for us but it would still generate the error in the background even if not used.
@@ -228,11 +368,12 @@ impl<'a> SkerryScanner<'a> {
             .type_definitions
             .try_insert(
                 composite_name.clone(),
-                TypeDefinition::composite(
-                    self.file_path.to_string(),
-                    sig_hash,
-                    CompositeType { types, composites },
-                ),
+                TypeDefinition::composite(CompositeType {
+                    file: self.file_path.to_string(),
+                    hash: sig_hash,
+                    types,
+                    composites,
+                }),
             )
             .is_err()
         {
@@ -252,22 +393,59 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
         match i {
             Item::Enum(e) => {
                 let e = e.clone();
-                if e.attrs.iter().any(|a| {
-                    if a.path().is_ident("skerry_global") {
-                        true
-                    } else {
-                        false
-                    }
-                }) {
+                if e.attrs.iter().any(|a| a.path().is_ident("skerry_global")) {
                     if self.global_error_path.is_some() {
                         panic!("Global error already defined");
                     }
 
-                    *self.global_error_path =
-                        Some((e.ident.to_string(), self.module_stack.join("::")));
+                    let module = self.module_stack.join("::");
+                    let global_ident = e.ident.to_string();
+                    let file = self.generator.get_new_cache(&self.file_path);
+
+                    let cache_line = postcard::to_allocvec(&CacheLine::Global {
+                        module: module.clone(),
+                        global_ident: global_ident.clone(),
+                    })
+                    .unwrap();
+
+                    file.write(&cache_line).unwrap();
+
+                    *self.global_error_path = Some((module, global_ident));
+
+                    for variant in e.variants {
+                        let name = variant.ident.to_string();
+                        let def = TypeDefinition::simple(SimpleType {
+                            fields: match variant.fields {
+                                syn::Fields::Named(f) => SimpleFields::Named(
+                                    f.named
+                                        .into_iter()
+                                        .map(|f| NamedField {
+                                            name: f.ident.unwrap().to_string(),
+                                            ty: f.ty.to_token_stream().to_string(),
+                                        })
+                                        .collect(),
+                                ),
+                                syn::Fields::Unnamed(f) => SimpleFields::Unnamed(
+                                    f.unnamed
+                                        .into_iter()
+                                        .map(|f| UnnamedField {
+                                            ty: f.ty.to_token_stream().to_string(),
+                                        })
+                                        .collect(),
+                                ),
+                                syn::Fields::Unit => SimpleFields::Unit,
+                            },
+                        });
+                        self.type_definitions.insert(name.clone(), def.clone());
+
+                        let cache_line =
+                            postcard::to_allocvec(&CacheLine::Definition(name, def)).unwrap();
+
+                        file.write(&cache_line).unwrap();
+                    }
                 }
             }
-            Item::Macro(m) => {
+            Item::Macro(_m) => {
                 // let last_segment = m.mac.path.segments.last();
                 // if last_segment.map_or(false, |s| s.ident == "skerry_include") {
                 //     if self.module.is_some() {
@@ -333,6 +511,10 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
     }
 
     fn visit_item_impl(&mut self, i: &'a ItemImpl) {
+        if !i.attrs.iter().any(|attr| attr.path().is_ident("skerry")) {
+            return;
+        }
+
         let self_name = if let Type::Path(tp) = &*i.self_ty {
             tp.path.segments.last().map(|s| s.ident.to_string())
         } else {
@@ -347,25 +529,30 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
     }
 
     fn visit_item_trait(&mut self, i: &'a ItemTrait) {
-        let prefix = i.ident.to_string();
+        if !i.attrs.iter().any(|attr| attr.path().is_ident("skerry")) {
+            return;
+        }
 
-        self.prefix_stack.push(prefix);
+        self.prefix_stack.push(i.ident.to_string());
         visit::visit_item_trait(self, i);
         self.prefix_stack.pop();
     }
 
     fn visit_item_fn(&mut self, i: &'a syn::ItemFn) {
-        self.process_function_error(&i.attrs, &i.sig);
+        if !i.attrs.iter().any(|attr| attr.path().is_ident("skerry")) {
+            return;
+        }
+        self.process_function_error(&i.sig);
         syn::visit::visit_item_fn(self, i);
     }
 
     fn visit_trait_item_fn(&mut self, i: &'a syn::TraitItemFn) {
-        self.process_function_error(&i.attrs, &i.sig);
+        self.process_function_error(&i.sig);
         syn::visit::visit_trait_item_fn(self, i);
     }
 
     fn visit_impl_item_fn(&mut self, i: &'a syn::ImplItemFn) {
-        self.process_function_error(&i.attrs, &i.sig);
+        self.process_function_error(&i.sig);
         syn::visit::visit_impl_item_fn(self, i);
     }
 }
@@ -556,7 +743,13 @@ impl SkerryGenerator {
         // Validate and generate errors
         for (name, def) in &type_definitions {
             {
-                let file = self.get_new_cache(def.file());
+                let file = self.get_new_cache(match &def.ty {
+                    TypeDefinitionType::Simple(_) => {
+                        writer.add_marker(name).unwrap();
+                        continue;
+                    }
+                    TypeDefinitionType::Composite(composite_type) => &composite_type.file,
+                });
 
                 let cache_line =
                     postcard::to_allocvec(&CacheLine::Definition(name.clone(), def.clone()))
@@ -564,14 +757,18 @@ impl SkerryGenerator {
                 file.write(&cache_line).unwrap();
             }
 
-            let TypeDefinition { file, hash, ty } = def;
+            let TypeDefinition { ty } = def;
 
             match ty {
-                TypeDefinitionType::Simple { mod_path } => {
-                    writer.add_macro_arm_empty(*hash).unwrap();
-                    writer.add_variant(mod_path, name).unwrap();
+                TypeDefinitionType::Simple(_) => {
+                    unreachable!()
                 }
-                TypeDefinitionType::Composite(CompositeType { types, composites }) => {
+                TypeDefinitionType::Composite(CompositeType {
+                    types,
+                    composites,
+                    file,
+                    hash,
+                }) => {
                     let mut missing_errors = vec![];
                     let mut remove_asterisk = vec![];
                     let mut add_asterisk = vec![];
@@ -622,7 +819,7 @@ impl SkerryGenerator {
                     }
 
                     writer
-                        .add_macro_arm_error(*hash, WrittenResult::Ok(format!("{module}::{name}")))
+                        .add_result(*hash, WrittenResult::Ok(format!("{module}::{name}")))
                         .unwrap();
                 }
             }
@@ -660,7 +857,14 @@ impl SkerryGenerator {
                 all_types.dedup();
 
                 writer.add_not(&name).unwrap();
-                writer.add_define(&name, &all_types).unwrap();
+                let types = all_types
+                    .iter()
+                    .map(|t| match &type_definitions.get(t).unwrap().ty {
+                        TypeDefinitionType::Simple(simple_type) => (t.as_str(), simple_type),
+                        TypeDefinitionType::Composite(_) => unreachable!(),
+                    })
+                    .collect::<Vec<_>>();
+                writer.add_define(&name, &types).unwrap();
 
                 expansions.insert(name, all_types);
             }
@@ -676,7 +880,7 @@ impl SkerryGenerator {
             }
 
             writer
-                .add_macro_arm_error(error.hash, WrittenResult::RawError { msg: error.msg })
+                .add_result(error.hash, WrittenResult::RawError { msg: error.msg })
                 .unwrap();
         }
 

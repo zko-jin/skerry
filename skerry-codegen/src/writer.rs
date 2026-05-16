@@ -16,6 +16,8 @@ use serde::{
     Serialize,
 };
 
+use crate::SimpleType;
+
 #[derive(Serialize, Deserialize)]
 pub enum EnumErrorLocation {
     Variant(String),
@@ -35,7 +37,6 @@ pub enum WrittenResult {
 
 pub struct SkerryWriter<'a> {
     writer: BufWriter<File>,
-    global_variants: BufWriter<Vec<u8>>,
     privates: BufWriter<Vec<u8>>,
     expand_folder: PathBuf,
     global_error_path: String,
@@ -49,7 +50,6 @@ impl<'a> SkerryWriter<'a> {
         let file = File::create(path.join("skerry_gen.rs")).unwrap();
         Self {
             writer: BufWriter::new(file),
-            global_variants: BufWriter::new(Vec::new()),
             privates: BufWriter::new(Vec::new()),
             expand_folder,
             global_error_path: format!("{}::{}", global_module, global_error_ident),
@@ -57,28 +57,34 @@ impl<'a> SkerryWriter<'a> {
         }
     }
 
-    pub fn add_variant(&mut self, module: &str, ty: &str) -> io::Result<()> {
-        write!(self.global_variants, "{ty}({module}::{ty}),")?;
-        Ok(())
-    }
+    // pub fn add_variant(&mut self, ty: &str) -> io::Result<()> {
+    //     // write!(self.global_variants, "{ty}({module}::{ty}),")?;
+    //     Ok(())
+    // }
 
-    pub fn add_define(&mut self, ty: &str, variants: &Vec<String>) -> io::Result<()> {
+    pub fn add_define(&mut self, ty: &str, variants: &Vec<(&str, &SimpleType)>) -> io::Result<()> {
         let global_error = &self.global_error_path;
 
-        for variant in variants {
+        write!(self.writer, "pub enum {ty}{{")?;
+        for (name, ty) in variants {
+            write!(self.writer, "{name}{},", ty.fields.display_def())?;
+        }
+        write!(self.writer, "}}")?;
+
+        for (name, _) in variants {
             write!(
                 self.writer,
-                "impl skerry::skerry_internals::Contains<crate::{variant}> for {ty}{{}}"
+                "impl skerry::skerry_internals::Contains<__skerry_private::{name}Marker> for {ty}{{}}"
             )?;
         }
         write!(self.writer, "impl <T:")?;
-        for (i, t) in variants.iter().enumerate() {
+        for (i, (name, _)) in variants.iter().enumerate() {
             if i > 0 {
                 write!(self.writer, "+")?;
             }
             write!(
                 self.writer,
-                "skerry::skerry_internals::Contains<crate::{t}>",
+                "skerry::skerry_internals::Contains<__skerry_private::{name}Marker>",
             )?;
         }
         write!(
@@ -91,21 +97,14 @@ impl<'a> SkerryWriter<'a> {
             "impl<E: Into<{global_error}> + skerry::skerry_internals::IsSubsetOf<{ty}> + \
             __skerry_private::Not{ty}> From<E> for {ty} {{fn from(val:E)->{ty}{{match val.into(){{"
         )?;
-        for t in variants {
-            writeln!(self.writer, "{global_error}::{t}(v) => {ty}::{t}(v),",)?;
-        }
-        write!(self.writer, "_ => unreachable!()}}}}}}")?;
-
-        for t in variants {
+        for (name, def) in variants {
+            let expand = def.fields.display_expansion();
             writeln!(
                 self.writer,
-                "impl From<crate::{t}> for {ty} {{
-                    fn from(val: crate::{t}) -> {ty} {{
-                        {ty}::{t}(val)
-                    }}
-                }}",
+                "{global_error}::{name}{expand} => {ty}::{name}{expand},",
             )?;
         }
+        write!(self.writer, "_ => unreachable!()}}}}}}")?;
 
         writeln!(
             self.writer,
@@ -113,31 +112,28 @@ impl<'a> SkerryWriter<'a> {
                 fn from(val: {ty}) -> {global_error} {{
                     match val {{",
         )?;
-        for t in variants {
-            writeln!(self.writer, "{ty}::{t}(v) => {global_error}::{t}(v),")?;
+        for (name, def) in variants {
+            let expand = def.fields.display_expansion();
+            writeln!(
+                self.writer,
+                "{ty}::{name}{expand} => {global_error}::{name}{expand},"
+            )?;
         }
         writeln!(self.writer, "}}}}}}")?;
         Ok(())
     }
 
-    pub fn add_macro_arm_empty(&mut self, hash: u64) -> io::Result<()> {
-        std::fs::write(self.expand_folder.join(hash.to_string()), "+")
-    }
-
-    pub fn add_macro_arm_composite(&mut self, hash: u64, module: &str, ty: &str) -> io::Result<()> {
-        std::fs::write(
-            self.expand_folder.join(hash.to_string()),
-            &format!("+{module}::{ty}"),
-        )
-    }
-
-    pub fn add_macro_arm_error(&mut self, hash: u64, res: WrittenResult) -> io::Result<()> {
+    pub fn add_result(&mut self, hash: u64, res: WrittenResult) -> io::Result<()> {
         let bytes = postcard::to_allocvec(&res).unwrap();
         std::fs::write(self.expand_folder.join(hash.to_string()), &bytes)
     }
 
+    pub fn add_marker(&mut self, ty: &str) -> io::Result<()> {
+        writeln!(self.privates, "pub struct {ty}Marker{{}}")
+    }
+
     pub fn add_not(&mut self, ty: &str) -> io::Result<()> {
-        write!(
+        writeln!(
             self.privates,
             "pub auto trait Not{ty} {{}} impl !Not{ty} for super::{ty} {{}}"
         )
@@ -146,7 +142,6 @@ impl<'a> SkerryWriter<'a> {
     pub fn finish(self) -> io::Result<()> {
         let SkerryWriter {
             mut writer,
-            global_variants,
             privates,
             global_error_path,
             ..
@@ -155,9 +150,9 @@ impl<'a> SkerryWriter<'a> {
         let bytes = postcard::to_allocvec(&WrittenResult::Ok(String::new())).unwrap();
         std::fs::write(self.expand_folder.join("global"), &bytes)?;
 
-        // write!(writer, "mod __skerry_private{{")?;
-        // writer.write(&privates.into_inner()?)?;
-        // write!(writer, "}}")?;
+        writeln!(writer, "#[allow(unused)]\nmod __skerry_private{{")?;
+        writer.write(&privates.into_inner()?)?;
+        write!(writer, "}}")?;
 
         // Is this needed? Maybe dropping the writer flushes it already
         writer.flush()

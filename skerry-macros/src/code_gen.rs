@@ -5,6 +5,7 @@ use quote::{
     quote,
 };
 use syn::{
+    Expr,
     GenericArgument,
     Ident,
     ItemFn,
@@ -24,9 +25,16 @@ pub fn calculate_ident_hash(ident: &syn::Ident) -> u64 {
     hasher.hash_one(ident.to_string())
 }
 
-pub fn calculate_sig_hash(sig: &syn::Signature) -> u64 {
+pub fn calculate_sig_hash(prefix: &str, sig: &syn::Signature) -> u64 {
     let sig_string = sig.to_token_stream().to_string();
-    let normalized: String = sig_string.chars().filter(|c| !c.is_whitespace()).collect();
+    let normalized: String = format!(
+        "{}{}",
+        prefix,
+        sig_string
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    );
 
     let hasher = RandomState::with_seeds(0, 0, 0, 0);
     hasher.hash_one(normalized)
@@ -69,54 +77,47 @@ impl Parse for EInput {
     }
 }
 
-pub fn e(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let _input = parse_macro_input!(attr as EInput);
+pub fn replace_fn_error(prefix: &str, sig: &mut syn::Signature) -> syn::Result<()> {
+    let sig_hash = proc_macro2::Literal::u64_unsuffixed(calculate_sig_hash(prefix, sig));
 
-    let mut input_fn = parse_macro_input!(item as ItemFn);
-    let sig = &input_fn.sig;
-
-    let sig_hash = proc_macro2::Literal::u64_unsuffixed(calculate_sig_hash(sig));
-
-    let return_type = match &sig.output {
-        ReturnType::Type(_, ty) => match extract_result_type(ty) {
-            Some(inner) => inner,
+    match &mut sig.output {
+        ReturnType::Type(_, ty) => match extract_result_error_type(ty) {
+            Some(arg) => {
+                // TODO: Check if it's e![...]
+                *arg = GenericArgument::Type(Type::Macro(syn::parse_quote! {
+                    skerry::skerry_internals::skerry_invoke!(#sig_hash)
+                }));
+            }
             None => {
-                return syn::Error::new_spanned(ty, "Function must return Result<T>")
-                    .to_compile_error()
-                    .into();
+                return Err(syn::Error::new_spanned(
+                    ty,
+                    "Function must return Result<T, e![...]>",
+                ));
             }
         },
         ReturnType::Default => {
-            return syn::Error::new_spanned(&sig.fn_token, "Function must return Result<T>")
-                .to_compile_error()
-                .into();
+            return Err(syn::Error::new_spanned(
+                sig.fn_token,
+                "Function must return Result<T, e![...]>",
+            ));
         }
     };
 
-    input_fn.sig.output = syn::parse2(quote! {
-        -> Result<#return_type, skerry::skerry_invoke!(#sig_hash)>
-    })
-    .expect("Failed to rewrite return type");
-
-    TokenStream::from(quote! {
-        #input_fn
-    })
+    Ok(())
 }
 
-fn extract_result_type(ty: &Type) -> Option<&Type> {
+fn extract_result_error_type(ty: &mut Type) -> Option<&mut GenericArgument> {
     let path = match ty {
-        Type::Path(tp) => &tp.path,
+        Type::Path(tp) => &mut tp.path,
         _ => return None,
     };
-    let last_segment = path.segments.last()?;
+    let last_segment = path.segments.last_mut()?;
     if last_segment.ident != "Result" {
         return None;
     }
 
-    if let PathArguments::AngleBracketed(args) = &last_segment.arguments {
-        if let Some(GenericArgument::Type(inner)) = args.args.first() {
-            return Some(inner);
-        }
+    if let PathArguments::AngleBracketed(args) = &mut last_segment.arguments {
+        return args.args.get_mut(1);
     }
     None
 }
