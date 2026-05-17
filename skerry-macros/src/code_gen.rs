@@ -1,14 +1,8 @@
 use ahash::RandomState;
-use proc_macro::TokenStream;
-use quote::{
-    ToTokens,
-    quote,
-};
+use quote::ToTokens;
 use syn::{
-    Expr,
     GenericArgument,
     Ident,
-    ItemFn,
     PathArguments,
     ReturnType,
     Token,
@@ -17,13 +11,7 @@ use syn::{
         Parse,
         ParseStream,
     },
-    parse_macro_input,
 };
-
-pub fn calculate_ident_hash(ident: &syn::Ident) -> u64 {
-    let hasher = RandomState::with_seeds(0, 0, 0, 0);
-    hasher.hash_one(ident.to_string())
-}
 
 pub fn calculate_sig_hash(prefix: &str, sig: &syn::Signature) -> u64 {
     let sig_string = sig.to_token_stream().to_string();

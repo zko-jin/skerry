@@ -1,6 +1,11 @@
-use skerry::skerry_global;
+use std::net::TcpStream;
 
-pub struct OuterError;
+use skerry::{
+    skerry_global,
+    skerry_internals::Contains,
+};
+
+use crate::errors::__skerry_private::IoMarker;
 
 #[skerry_global]
 pub enum Global {
@@ -11,5 +16,5 @@ pub enum Global {
         inner: u32,
     },
     #[from]
-    Outer(OuterError),
+    Io(TcpStream),
 }

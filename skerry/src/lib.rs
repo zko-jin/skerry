@@ -277,7 +277,6 @@
 mod macros;
 mod traits;
 pub use skerry_macros::{
-    define_error,
     skerry,
     skerry_global,
 };

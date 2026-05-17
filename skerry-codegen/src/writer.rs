@@ -40,6 +40,7 @@ pub struct SkerryWriter<'a> {
     privates: BufWriter<Vec<u8>>,
     expand_folder: PathBuf,
     global_error_path: String,
+    #[allow(unused)]
     global_module: &'a str,
 }
 
@@ -57,10 +58,18 @@ impl<'a> SkerryWriter<'a> {
         }
     }
 
-    // pub fn add_variant(&mut self, ty: &str) -> io::Result<()> {
-    //     // write!(self.global_variants, "{ty}({module}::{ty}),")?;
-    //     Ok(())
-    // }
+    pub fn add_from(&mut self, from: &str, variant: &str) -> io::Result<()> {
+        let global_error = &self.global_error_path;
+        write!(
+            self.writer,
+            "impl From<{from}> for {global_error} {{
+                fn from(v: {from}) -> Self {{
+                    {global_error}::{variant}(v)
+                }}
+            }}
+            impl<T:Contains<{variant}Marker>> IsSubsetOf<T> for {from} {{}}"
+        )
+    }
 
     pub fn add_define(&mut self, ty: &str, variants: &Vec<(&str, &SimpleType)>) -> io::Result<()> {
         let global_error = &self.global_error_path;
@@ -87,14 +96,11 @@ impl<'a> SkerryWriter<'a> {
                 "skerry::skerry_internals::Contains<__skerry_private::{name}Marker>",
             )?;
         }
-        write!(
-            self.writer,
-            "> skerry::skerry_internals::IsSubsetOf<T> for {ty}{{}}"
-        )?;
+        write!(self.writer, "> IsSubsetOf<T> for {ty}{{}}")?;
 
         write!(
             self.writer,
-            "impl<E: Into<{global_error}> + skerry::skerry_internals::IsSubsetOf<{ty}> + \
+            "impl<E: Into<{global_error}> + IsSubsetOf<{ty}> + \
             __skerry_private::Not{ty}> From<E> for {ty} {{fn from(val:E)->{ty}{{match val.into(){{"
         )?;
         for (name, def) in variants {
@@ -143,7 +149,6 @@ impl<'a> SkerryWriter<'a> {
         let SkerryWriter {
             mut writer,
             privates,
-            global_error_path,
             ..
         } = self;
 
@@ -153,6 +158,8 @@ impl<'a> SkerryWriter<'a> {
         writeln!(writer, "#[allow(unused)]\nmod __skerry_private{{")?;
         writer.write(&privates.into_inner()?)?;
         write!(writer, "}}")?;
+
+        write!(writer, "trait IsSubsetOf<T> {{}}")?;
 
         // Is this needed? Maybe dropping the writer flushes it already
         writer.flush()

@@ -41,10 +41,10 @@ use crate::writer::SkerryWriter;
 
 mod writer;
 
-fn calculate_ident_hash(ident: &syn::Ident) -> u64 {
-    let hasher = RandomState::with_seeds(0, 0, 0, 0);
-    hasher.hash_one(ident.to_string())
-}
+// fn calculate_ident_hash(ident: &syn::Ident) -> u64 {
+//     let hasher = RandomState::with_seeds(0, 0, 0, 0);
+//     hasher.hash_one(ident.to_string())
+// }
 
 pub fn calculate_sig_hash(prefix: String, sig: &syn::Signature) -> u64 {
     let sig_string = sig.to_token_stream().to_string();
@@ -143,6 +143,7 @@ impl SimpleFields {
 #[derive(Clone, Serialize, Deserialize)]
 struct SimpleType {
     fields: SimpleFields,
+    from: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -414,9 +415,9 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
 
                     for variant in e.variants {
                         let name = variant.ident.to_string();
-                        let def = TypeDefinition::simple(SimpleType {
-                            fields: match variant.fields {
-                                syn::Fields::Named(f) => SimpleFields::Named(
+                        let def = TypeDefinition::simple(match variant.fields {
+                            syn::Fields::Named(f) => SimpleType {
+                                fields: SimpleFields::Named(
                                     f.named
                                         .into_iter()
                                         .map(|f| NamedField {
@@ -425,7 +426,19 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
                                         })
                                         .collect(),
                                 ),
-                                syn::Fields::Unnamed(f) => SimpleFields::Unnamed(
+                                from: None,
+                            },
+                            syn::Fields::Unnamed(f) => SimpleType {
+                                from: if variant.attrs.iter().any(|a| a.path().is_ident("from"))
+                                    && f.unnamed.len() == 1
+                                {
+                                    Some(
+                                        f.unnamed.first().unwrap().ty.to_token_stream().to_string(),
+                                    )
+                                } else {
+                                    None
+                                },
+                                fields: SimpleFields::Unnamed(
                                     f.unnamed
                                         .into_iter()
                                         .map(|f| UnnamedField {
@@ -433,7 +446,10 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
                                         })
                                         .collect(),
                                 ),
-                                syn::Fields::Unit => SimpleFields::Unit,
+                            },
+                            syn::Fields::Unit => SimpleType {
+                                fields: SimpleFields::Unit,
+                                from: None,
                             },
                         });
                         self.type_definitions.insert(name.clone(), def.clone());
@@ -469,37 +485,6 @@ impl<'a> Visit<'a> for SkerryScanner<'a> {
                 return;
             }
         };
-
-        // let hash = calculate_ident_hash(&ident);
-
-        // if attrs.iter().any(|attr| {
-        //     if attr.path().is_ident("skerry_error") {
-        //         true
-        //     } else {
-        //         false
-        //     }
-        // }) {
-        //     if self
-        //         .type_definitions
-        //         .try_insert(
-        //             ident.to_string(),
-        //             TypeDefinition::simple(
-        //                 self.file_path.to_string(),
-        //                 hash,
-        //                 self.module_stack.join("::"),
-        //             ),
-        //         )
-        //         .is_err()
-        //     {
-        //         self.errors.push(TypeDefinitionError::new(
-        //             DefinitionErrorCause::NameConflict {
-        //                 name: ident.to_string(),
-        //             },
-        //             self.file_path.to_string(),
-        //             hash,
-        //         ));
-        //     }
-        // }
 
         visit::visit_item(self, i);
     }
@@ -744,8 +729,11 @@ impl SkerryGenerator {
         for (name, def) in &type_definitions {
             {
                 let file = self.get_new_cache(match &def.ty {
-                    TypeDefinitionType::Simple(_) => {
+                    TypeDefinitionType::Simple(ty) => {
                         writer.add_marker(name).unwrap();
+                        if let Some(from) = &ty.from {
+                            writer.add_from(from, name).unwrap();
+                        }
                         continue;
                     }
                     TypeDefinitionType::Composite(composite_type) => &composite_type.file,

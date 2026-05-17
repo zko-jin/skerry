@@ -1,58 +1,20 @@
-use std::collections::HashSet;
-
 use proc_macro::TokenStream;
-use quote::{
-    format_ident,
-    quote,
-};
+use quote::quote;
 use syn::{
-    Attribute,
-    Ident,
-    ImplItemFn,
+    self,
     Item,
     ItemEnum,
-    ItemFn,
-    ItemImpl,
-    ItemTrait,
-    Path,
-    ReturnType,
-    Token,
-    TraitItemFn,
     Type,
     Visibility,
-    parse::{
-        Parse,
-        ParseStream,
-    },
     parse_macro_input,
-    parse_quote,
-    punctuated::Punctuated,
-    visit_mut::{
-        self,
-        VisitMut,
-    },
 };
 
-use crate::{
-    code_gen::replace_fn_error,
-    internal::skerry_fn::{
-        format_snake_case,
-        process_inner_errors,
-        quote_error_gen,
-    },
-};
+use crate::code_gen::replace_fn_error;
 
-mod internal {
-    pub mod skerry_fn;
-    pub mod skerry_impl;
-    pub mod skerry_mod;
-    pub mod skerry_trait;
-}
+mod internal {}
 
-#[cfg(feature = "codegen")]
 mod code_gen;
 
-#[cfg(feature = "codegen")]
 #[proc_macro]
 pub fn skerry_invoke(input: TokenStream) -> TokenStream {
     use std::{
@@ -85,45 +47,12 @@ pub fn skerry_invoke(input: TokenStream) -> TokenStream {
 
     match result {
         WrittenResult::Ok(s) => s.parse().unwrap(),
-        WrittenResult::EnumError { location, msg } => {
+        WrittenResult::EnumError { msg, .. } => {
             syn::Error::new(span, msg).to_compile_error().into()
         }
         WrittenResult::RawError { msg } => syn::Error::new(span, msg).to_compile_error().into(),
     }
 }
-
-#[cfg(feature = "codegen")]
-#[proc_macro]
-pub fn e(item: TokenStream) -> TokenStream {
-    item
-}
-
-// #[cfg(feature = "codegen")]
-// #[proc_macro_attribute]
-// pub fn skerry_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
-//     use syn::Item;
-
-//     use crate::code_gen::calculate_ident_hash;
-
-//     let item = parse_macro_input!(item as Item);
-//     let ident = match &item {
-//         Item::Struct(s) => &s.ident,
-//         Item::Enum(e) => &e.ident,
-//         _ => {
-//             return syn::Error::new_spanned(item, "skerry_error only supports structs and enums")
-//                 .to_compile_error()
-//                 .into();
-//         }
-//     };
-
-//     let hash = proc_macro2::Literal::u64_unsuffixed(calculate_ident_hash(ident));
-//     quote! {
-//         skerry::skerry_internals::skerry_invoke!{ #hash }
-//         #item
-//     }
-//     .into()
-// }
-//
 
 #[proc_macro_attribute]
 pub fn skerry(_attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -243,38 +172,38 @@ pub fn skerry_global(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     TokenStream::from(output)
 }
-struct DefineErrorInput {
-    type_ident: Ident,
-    _comma: Token![,],
-    bracket: syn::token::Bracket,
-    inner_tokens: proc_macro2::TokenStream,
-}
+// struct DefineErrorInput {
+//     type_ident: Ident,
+//     _comma: Token![,],
+//     bracket: syn::token::Bracket,
+//     inner_tokens: proc_macro2::TokenStream,
+// }
 
-impl syn::parse::Parse for DefineErrorInput {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let content;
-        Ok(DefineErrorInput {
-            type_ident: input.parse()?,
-            _comma: input.parse()?,
-            bracket: syn::bracketed!(content in input),
-            inner_tokens: content.parse()?,
-        })
-    }
-}
+// impl syn::parse::Parse for DefineErrorInput {
+//     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+//         let content;
+//         Ok(DefineErrorInput {
+//             type_ident: input.parse()?,
+//             _comma: input.parse()?,
+//             bracket: syn::bracketed!(content in input),
+//             inner_tokens: content.parse()?,
+//         })
+//     }
+// }
 
-#[proc_macro]
-pub fn define_error(input: TokenStream) -> TokenStream {
-    let DefineErrorInput {
-        type_ident,
-        inner_tokens,
-        bracket,
-        ..
-    } = parse_macro_input!(input as DefineErrorInput);
-    let mut iter = inner_tokens.into_iter().peekable();
-    let errors = match process_inner_errors(&mut iter, bracket.span.join()) {
-        Ok(v) => v,
-        Err(e) => return e.into_compile_error().into(),
-    };
+// #[proc_macro]
+// pub fn define_error(input: TokenStream) -> TokenStream {
+//     let DefineErrorInput {
+//         type_ident,
+//         inner_tokens,
+//         bracket,
+//         ..
+//     } = parse_macro_input!(input as DefineErrorInput);
+//     // let mut iter = inner_tokens.into_iter().peekable();
+//     // let errors = match process_inner_errors(&mut iter, bracket.span.join()) {
+//     //     Ok(v) => v,
+//     //     Err(e) => return e.into_compile_error().into(),
+//     // };
 
-    quote_error_gen(type_ident, errors).into()
-}
+//     // quote_error_gen(type_ident, errors).into()
+// }

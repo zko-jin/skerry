@@ -1,43 +1,34 @@
 #![feature(negative_impls)]
 #![feature(auto_traits)]
 
+use std::net::TcpStream;
+
 use skerry::skerry;
-
-use crate::errors::OuterError;
-
-// use crate::errors::GlobalErrors;
 
 mod errors;
 
 fn main() {
-    // let _ = my_fn_1();
+    let _ = my_fn_1();
 }
 
-// impl From<OuterError> for GlobalErrors {
-//     fn from(value: OuterError) -> Self {
-//         GlobalErrors::Outer(value)
-//     }
-// }
-// impl<T: Contains<Outer>> IsSubsetOf<T> for OuterError {}
-
 #[skerry]
-fn my_fn_1() -> Result<(), e![ErrA, Outer]> {
-    let _r: Result<(), OuterError> = Err(OuterError);
-    // r?;
+fn my_fn_1() -> Result<(), e![ErrA, Io]> {
+    let r: Result<(), TcpStream> = Err(TcpStream::connect("addr").unwrap());
+    r?;
     Ok(())
 }
 
-// #[skerry]
-// pub fn my_fn_3() -> Result<(), e![ErrB, *MyFn1Error]> {
-//     my_fn_1()?;
-//     Ok(())
-// }
+#[skerry]
+pub fn my_fn_3() -> Result<(), e![ErrB, *MyFn1Error]> {
+    my_fn_1()?;
+    Ok(())
+}
 
-// #[skerry]
-// trait TestTrait {
-//     // #[e(*MyFn3Error)]
-//     // fn my_fn_5() -> Result<()> {
-//     //     my_fn_3()?;
-//     //     Ok(())
-//     // }
-// }
+#[skerry]
+#[allow(unused)]
+trait TestTrait {
+    fn my_fn_5() -> Result<(), e![*MyFn3Error]> {
+        my_fn_3()?;
+        Ok(())
+    }
+}
