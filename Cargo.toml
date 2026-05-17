@@ -1,3 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["skerry_macros", "skerry"]
+members = ["skerry-macros", "skerry", "examples/codegen", "skerry-codegen"]
+
+[workspace.dependencies]
+skerry = { path = "./skerry", version = "0.1.7" }
+skerry-macros = { path = "./skerry-macros", version = "0.1.5" }
+skerry-codegen = { path = "./skerry-codegen", version = "0.1.0" }
+ahash = { version = "0.8.12", features = ["std", "no-rng"], default-features = false }
